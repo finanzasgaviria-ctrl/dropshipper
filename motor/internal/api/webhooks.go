@@ -6,11 +6,13 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
 	"github.com/michiTrader/dropshipper/motor/internal/convo"
 	"github.com/michiTrader/dropshipper/motor/internal/payments"
+	"github.com/michiTrader/dropshipper/motor/internal/settings"
 	"github.com/michiTrader/dropshipper/motor/internal/store"
 	"github.com/michiTrader/dropshipper/motor/internal/whatsapp"
 )
@@ -36,6 +38,9 @@ func (s *Server) waWebhook(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "cuerpo inválido", 400)
 		return
 	}
+	if os.Getenv("MOTOR_WEBHOOK_DEBUG") != "" {
+		s.Log.Printf("webhook crudo: %s", body)
+	}
 	if !whatsapp.VerifySignature(s.Settings.Get().WhatsApp.AppSecret, body, r.Header.Get("X-Hub-Signature-256")) {
 		s.Log.Printf("webhook WhatsApp con firma inválida (revisa el App Secret en Conexiones > WhatsApp)")
 		http.Error(w, "firma inválida", http.StatusUnauthorized)
@@ -48,6 +53,24 @@ func (s *Server) waWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(200)
+
+	// Remember the WhatsApp Business account the first time Meta tells us: it
+	// is the identifier needed to subscribe the app, and asking for it by hand
+	// is the step that most often leaves a shop silently dead.
+	if ids := whatsapp.AccountIDs(body); len(ids) > 0 && s.Settings.Get().WhatsApp.WABAID == "" {
+		go func(id string) {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if err := s.Settings.Update(ctx, func(st *settings.Settings) error {
+				if st.WhatsApp.WABAID == "" {
+					st.WhatsApp.WABAID = id
+				}
+				return nil
+			}); err == nil {
+				s.Log.Printf("cuenta de WhatsApp Business detectada: %s", id)
+			}
+		}(ids[0])
+	}
 
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)

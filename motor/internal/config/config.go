@@ -58,6 +58,12 @@ type WhatsAppConfig struct {
 	VerifyToken   string `json:"verify_token"`
 	AppSecret     string `json:"app_secret"`
 	GraphVersion  string `json:"graph_version"`
+	// AppID and WABAID let the Motor configure Meta by itself: register the
+	// webhook on the app and subscribe the app to the WhatsApp Business
+	// account, which is the step that silently breaks delivery. Both are
+	// discovered when missing (AppID from the token, WABAID from a webhook).
+	AppID  string `json:"app_id"`
+	WABAID string `json:"waba_id"`
 }
 
 // Channel is the selected channel; anything but "web" means the Cloud API.

@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/url"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"text/tabwriter"
@@ -45,6 +46,8 @@ Uso:  motor [-dir CARPETA] [comando]
     whatsapp ver | probar | quitar
     whatsapp configurar [--token T|-] [--telefono-id ID] [--verify-token V]
                         [--app-secret S|-] [--version v21.0]
+    whatsapp conectar [--cuenta WABA] [--app-id ID] [--url https://...]
+                      (registra el webhook y suscribe la app a la cuenta por ti)
 
   wompi                    links de pago Wompi (opcional)
     wompi ver | probar | quitar
@@ -201,6 +204,13 @@ func maskOr(s string) string {
 		return "(sin configurar)"
 	}
 	return settings.Mask(s)
+}
+
+func orDash(s string) string {
+	if s == "" {
+		return "(se detecta solo)"
+	}
+	return s
 }
 
 func (c *cli) tw() *tabwriter.Writer { return tabwriter.NewWriter(c.out, 0, 4, 2, ' ', 0) }
@@ -514,6 +524,8 @@ func (c *cli) whatsapp(args []string) error {
 		c.p("ID del telefono:  %s", w.PhoneNumberID)
 		c.p("Verify token:     %s", maskOr(w.VerifyToken))
 		c.p("App secret:       %s", maskOr(w.AppSecret))
+		c.p("App ID:           %s", orDash(w.AppID))
+		c.p("Cuenta (WABA):    %s", orDash(w.WABAID))
 		c.p("Version Graph:    %s", w.GraphVersion)
 		base := c.set.Get().General.PublicURL
 		if base == "" {
@@ -586,8 +598,110 @@ func (c *cli) whatsapp(args []string) error {
 		}
 		c.applied("WhatsApp configurado. Verifica con: motor whatsapp probar")
 		return nil
+	case "conectar":
+		fs := flag.NewFlagSet("whatsapp", flag.ContinueOnError)
+		waba := fs.String("cuenta", "", "")
+		appID := fs.String("app-id", "", "")
+		publico := fs.String("url", "", "")
+		if _, err := parse(fs, rest); err != nil {
+			return err
+		}
+		return c.connectWhatsApp(*waba, *appID, *publico)
 	}
 	return fmt.Errorf("no conozco 'whatsapp %s'; usa 'motor ayuda'", sub)
+}
+
+// connectWhatsApp does the two Meta-side steps (webhook registration and
+// app-to-account subscription) so a new shop needs only credentials.
+func (c *cli) connectWhatsApp(waba, appID, publico string) error {
+	st := c.set.Get()
+	cfg := st.WhatsApp
+	if cfg.Token == "" || cfg.PhoneNumberID == "" {
+		return errors.New("faltan el token y el ID del numero: motor whatsapp configurar -token ... -telefono-id ...")
+	}
+	if cfg.AppSecret == "" {
+		return errors.New("falta la clave secreta de la app: motor whatsapp configurar -app-secret ...")
+	}
+	if strings.TrimSpace(waba) != "" {
+		cfg.WABAID = strings.TrimSpace(waba)
+	}
+	if strings.TrimSpace(appID) != "" {
+		cfg.AppID = strings.TrimSpace(appID)
+	}
+	base := strings.TrimRight(strings.TrimSpace(publico), "/")
+	if base == "" {
+		base = strings.TrimRight(st.General.PublicURL, "/")
+	}
+	if base == "" {
+		return errors.New("no hay direccion publica: usa -url https://... o activa el tunel de ngrok en el panel")
+	}
+	if cfg.VerifyToken == "" {
+		cfg.VerifyToken = settings.NewToken()[:24]
+	}
+	if cfg.GraphVersion == "" {
+		cfg.GraphVersion = "v21.0"
+	}
+	ctx, cancel := context.WithTimeout(c.ctx, 90*time.Second)
+	defer cancel()
+	cl := whatsapp.New(cfg.Token, cfg.PhoneNumberID, cfg.GraphVersion)
+
+	info, err := cl.Check(ctx)
+	if err != nil {
+		return fmt.Errorf("el numero no responde: %w", err)
+	}
+	c.p("[ok]    Numero: %s %s", info.DisplayPhone, info.VerifiedName)
+
+	if cfg.AppID == "" {
+		id, err := cl.AppID(ctx)
+		if err != nil {
+			return fmt.Errorf("no se pudo detectar la app del token: %w", err)
+		}
+		cfg.AppID = id
+	}
+	c.p("[ok]    App de Meta: %s", cfg.AppID)
+
+	hook := base + "/webhook/whatsapp"
+	if err := cl.SetWebhook(ctx, cfg.AppID, cfg.AppSecret, hook, cfg.VerifyToken, []string{"messages"}); err != nil {
+		return fmt.Errorf("Meta no acepto el webhook %s: %w", hook, err)
+	}
+	spec, err := cl.Webhook(ctx, cfg.AppID, cfg.AppSecret)
+	switch {
+	case err != nil:
+		return fmt.Errorf("Meta no confirmo el webhook: %w", err)
+	case !spec.Active || spec.CallbackURL != hook:
+		return fmt.Errorf("Meta tiene el webhook en %q (activo=%v)", spec.CallbackURL, spec.Active)
+	}
+	c.p("[ok]    Webhook: %s (campo messages)", hook)
+
+	if cfg.WABAID == "" {
+		return errors.New("falta el ID de la cuenta de WhatsApp Business: pasalo con -cuenta <id> (lo muestra Meta en Configuracion de la API)")
+	}
+	subs, err := cl.SubscribedApps(ctx, cfg.WABAID)
+	if err != nil {
+		return fmt.Errorf("Meta no deja leer la cuenta %s: %w", cfg.WABAID, err)
+	}
+	if !slices.Contains(subs, cfg.AppID) {
+		if err := cl.SubscribeApp(ctx, cfg.WABAID); err != nil {
+			return fmt.Errorf("no se pudo suscribir la app a la cuenta: %w", err)
+		}
+		c.p("[ok]    App suscrita a la cuenta %s", cfg.WABAID)
+	} else {
+		c.p("[ok]    App ya estaba suscrita a la cuenta %s", cfg.WABAID)
+	}
+
+	err = c.set.Update(c.ctx, func(s *settings.Settings) error {
+		if s.WhatsApp.Canal == "" {
+			s.WhatsApp.Canal = config.ChannelCloud
+		}
+		s.WhatsApp = cfg
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	c.p("[ok]    Configuracion guardada")
+	fmt.Fprintln(c.out, "\nWhatsApp conectado de punta a punta. Escribe al numero desde un celular.")
+	return nil
 }
 
 // ---------- wompi ----------

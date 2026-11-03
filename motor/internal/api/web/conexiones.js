@@ -291,24 +291,42 @@ function paintWAWeb(inf) {
 // ----- API oficial de Meta (Cloud) -----
 function drawWACloud() {
   const w = CN.cfg.whatsapp;
-  $('#waBody').innerHTML = `<div class="notice info" style="margin-bottom:10px">${ic('info', 16)}<div>API oficial de Meta (WhatsApp Cloud). Es la opción más estable, pero Meta pide documentos del negocio para dar el token permanente. Los pasos están en la guía de configuración.</div></div>
+  const pend = [];
+  if (!w.token.configurada) pend.push('token de acceso');
+  if (!w.phone_number_id) pend.push('ID del número');
+  if (!w.app_secret.configurada) pend.push('secreto de la app');
+  if (!w.waba_id) pend.push('ID de la cuenta (WABA)');
+  $('#waBody').innerHTML = `<div class="notice info" style="margin-bottom:10px">${ic('info', 16)}<div>API oficial de Meta (WhatsApp Cloud). Es la opción más estable. Pega las credenciales y pulsa <b>Conectar automáticamente</b>: el Motor registra el webhook en Meta y suscribe la app a tu cuenta de WhatsApp Business por ti, que son los dos pasos donde casi todos se quedan atascados.</div></div>
     <form id="waForm" autocomplete="off">
       <div class="fgrid">
         ${secretField('token', 'Token de acceso permanente', w.token, { ph: 'EAAG...', help: 'Se crea en Meta for Developers, con un usuario del sistema.' })}
         ${fld('phone_number_id', 'ID del número de teléfono', w.phone_number_id, { help: 'No es el número: es el identificador que muestra Meta.' })}
-        <label class="field"><span>Token de verificación del webhook</span><div class="inline"><input class="secret-input" name="verify_token" type="password" autocomplete="new-password" readonly data-lpignore="true" data-1p-ignore placeholder="${w.verify_token.configurada ? 'Sin cambios' : 'Invéntalo o genéralo'}"><button class="btn" type="button" id="waGen">Generar</button></div>
-          ${secretHint(w.verify_token)}<small>Debe ser el mismo texto que escribas en Meta al registrar el webhook.</small></label>
-        ${secretField('app_secret', 'Secreto de la app (recomendado)', w.app_secret, { help: 'Permite verificar que los mensajes entrantes vienen de Meta.' })}
+        ${secretField('app_secret', 'Clave secreta de la app', w.app_secret, { help: 'Meta > Información básica > Clave secreta de la app. Son 32 caracteres. Sirve para firmar los webhooks y configurarlos.' })}
+        ${fld('waba_id', 'ID de la cuenta de WhatsApp Business (WABA)', w.waba_id, { ph: 'Se rellena solo', help: 'Meta > Configuración de la API > «Identificador de la cuenta de WhatsApp Business». Si lo dejas vacío se detecta con el primer mensaje.' })}
+        ${fld('app_id', 'ID de la app de Meta', w.app_id, { ph: 'Se detecta solo', help: 'Si lo dejas vacío, el Motor le pregunta a Meta a qué app pertenece el token.' })}
         ${fld('graph_version', 'Versión de la API', w.graph_version, { ph: 'v21.0' })}
       </div>
-      <div class="field"><span style="font-size:12px;font-weight:600;color:var(--text-2)">Dirección del webhook (pégala en Meta)</span><div id="waHook">${waHookHTML(w, CN.cfg.general)}</div></div>
+      <div class="field"><span style="font-size:12px;font-weight:600;color:var(--text-2)">Dirección del webhook</span><div id="waHook">${waHookHTML(w, CN.cfg.general)}</div></div>
       <div class="testres" id="waTest"></div>
-      <div class="form-actions"><button class="btn" type="button" id="waTestBtn">${ic('refresh', 14)} Probar conexión</button><span class="spacer"></span>
-        ${w.configurado ? '<button class="btn danger" type="button" id="waDel">Desconectar</button>' : ''}<button class="btn primary" type="submit">Guardar</button></div>
+      <div class="form-actions">
+        ${pend.length ? `<span class="muted" style="font-size:12px">Falta: ${esc(pend.join(' · '))}</span>` : ''}<span class="spacer"></span>
+        <button class="btn" type="button" id="waTestBtn">${ic('refresh', 14)} Probar número</button>
+        <button class="btn primary" type="button" id="waConnectBtn">${ic('plug', 14)} Conectar automáticamente</button>
+        ${w.configurado ? '<button class="btn danger" type="button" id="waDel">Desconectar</button>' : ''}
+      </div>
+      <div class="fgrid" style="margin-top:6px"><button class="btn" type="submit">Guardar sin conectar</button></div>
     </form>`;
   const f = $('#waForm');
-  $('#waGen').onclick = () => { f.verify_token.type = 'text'; f.verify_token.value = randHex(12); toast('Token generado. Guarda y cópialo en Meta.'); };
   $('#waTestBtn').onclick = (e) => busy(e.currentTarget, async () => showTest($('#waTest'), await post('/api/whatsapp/probar', formData(f))));
+  $('#waConnectBtn').onclick = (e) => busy(e.currentTarget, async () => {
+    const box = $('#waTest');
+    try {
+      const r = await post('/api/whatsapp/conectar', formData(f));
+      box.innerHTML = connectStepsHTML(r);
+      hydrateIcons(box);
+      if (r.ok) { toast('WhatsApp conectado de punta a punta.'); setTimeout(renderConexiones, 1200); }
+    } catch (err) { box.innerHTML = notice('bad', esc(err.message)); }
+  });
   f.onsubmit = async (e) => {
     e.preventDefault();
     await busy(e.submitter, async () => {
@@ -320,6 +338,17 @@ function drawWACloud() {
     if (!confirm('¿Desconectar WhatsApp? Se borran el token y los secretos guardados.')) return;
     try { await del('/api/ajustes/whatsapp'); toast('WhatsApp desconectado.'); renderConexiones(); } catch (err) { toast(err.message, true); }
   };
+}
+
+// Informe del botón "Conectar automáticamente": una línea por paso, con el
+// arreglo del primero que falle.
+function connectStepsHTML(r) {
+  const pasos = r.pasos || [];
+  const rows = pasos.map((p) => `<div class="stp ${p.ok ? 'ok' : 'bad'}">
+    <span class="stp-ico">${ic(p.ok ? 'check' : 'x', 13)}</span>
+    <div><b>${esc(p.paso)}</b>${p.detalle ? `<div class="stp-txt">${esc(p.detalle)}</div>` : ''}${p.arreglo ? `<div class="stp-fix">${esc(p.arreglo)}</div>` : ''}</div></div>`).join('');
+  const head = r.ok ? notice('ok', '<b>Listo: WhatsApp conectado de punta a punta.</b> Ya puedes escribir al número del negocio.') : notice('bad', '<b>Falta un paso.</b> Abajo está cuál es y cómo arreglarlo.');
+  return `${head}<div class="steps">${rows}</div>`;
 }
 
 // Dirección del webhook según de dónde salga: túnel de ngrok, dirección pública guardada o solo este equipo.
