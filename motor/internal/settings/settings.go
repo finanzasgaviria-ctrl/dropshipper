@@ -133,12 +133,43 @@ type General struct {
 	AdminToken string `json:"token_admin"`
 }
 
+// Ngrok is the optional public tunnel the Motor opens itself, so Meta and Wompi
+// can reach the webhooks without the owner running ngrok by hand.
+type Ngrok struct {
+	Token   string `json:"token"`   // authtoken from dashboard.ngrok.com
+	Domain  string `json:"dominio"` // fixed domain (recommended); empty = random one
+	Enabled bool   `json:"activo"`
+}
+
+// CleanNgrokToken accepts the token alone or the whole command copied from the
+// ngrok dashboard ("ngrok config add-authtoken XXXX") and returns just the token.
+func CleanNgrokToken(v string) string {
+	f := strings.Fields(v)
+	if len(f) == 0 {
+		return ""
+	}
+	return strings.Trim(f[len(f)-1], `"'`)
+}
+
+// CleanNgrokDomain turns "https://mi-app.ngrok-free.app/" into "mi-app.ngrok-free.app".
+func CleanNgrokDomain(v string) string {
+	v = strings.TrimSpace(v)
+	for _, p := range []string{"https://", "http://"} {
+		v = strings.TrimPrefix(v, p)
+	}
+	if i := strings.IndexAny(v, "/?#"); i >= 0 {
+		v = v[:i]
+	}
+	return strings.ToLower(strings.TrimSpace(v))
+}
+
 // Settings is the complete configuration.
 type Settings struct {
 	IA       IA                    `json:"ia"`
 	WhatsApp config.WhatsAppConfig `json:"whatsapp"`
 	Wompi    config.WompiConfig    `json:"wompi"`
 	Dropi    config.DropiConfig    `json:"dropi"`
+	Ngrok    Ngrok                 `json:"ngrok"`
 	General  General               `json:"general"`
 	Negocio  config.Negocio        `json:"negocio"`
 }
@@ -193,6 +224,18 @@ func (s *Settings) Validate() error {
 	case "", config.ChannelCloud, config.ChannelWeb:
 	default:
 		return errors.New("el canal de WhatsApp debe ser 'cloud' (API oficial) o 'web' (WhatsApp Web)")
+	}
+	ng := &s.Ngrok
+	ng.Token = CleanNgrokToken(ng.Token)
+	ng.Domain = CleanNgrokDomain(ng.Domain)
+	if ng.Domain != "" && (!strings.Contains(ng.Domain, ".") || strings.ContainsAny(ng.Domain, " :@")) {
+		return errors.New("el dominio de ngrok debe verse como mi-app.ngrok-free.app (sin https:// ni espacios)")
+	}
+	if t := s.General.AdminToken; t != "" && ng.Token == t {
+		return errors.New("el token de ngrok es igual al token de acceso del panel: seguramente el navegador lo rellenó solo. Pega aquí el Authtoken de ngrok")
+	}
+	if ng.Enabled && ng.Token == "" {
+		return errors.New("pega primero tu Authtoken de ngrok para activar el túnel")
 	}
 	s.Dropi.Token = strings.TrimSpace(s.Dropi.Token)
 	s.Dropi.OriginDept = strings.TrimSpace(s.Dropi.OriginDept)
@@ -272,6 +315,7 @@ const (
 	keyWhatsApp = "whatsapp"
 	keyWompi    = "wompi"
 	keyDropi    = "dropi"
+	keyNgrok    = "ngrok"
 	keyGeneral  = "general"
 	keyNegocio  = "negocio"
 	keyReady    = "_seeded"
@@ -331,7 +375,7 @@ func Open(ctx context.Context, st *store.Store, seedFn func() Settings) (*Manage
 }
 
 func (m *Manager) persist(ctx context.Context, s Settings) error {
-	parts := map[string]any{keyIA: s.IA, keyWhatsApp: s.WhatsApp, keyWompi: s.Wompi, keyDropi: s.Dropi, keyGeneral: s.General, keyNegocio: s.Negocio}
+	parts := map[string]any{keyIA: s.IA, keyWhatsApp: s.WhatsApp, keyWompi: s.Wompi, keyDropi: s.Dropi, keyNgrok: s.Ngrok, keyGeneral: s.General, keyNegocio: s.Negocio}
 	for k, v := range parts {
 		raw, err := json.Marshal(v)
 		if err != nil {
@@ -357,7 +401,7 @@ func (m *Manager) load(ctx context.Context) (Settings, error) {
 		return json.Unmarshal([]byte(raw), dst)
 	}
 	s.Negocio = config.DefaultNegocio()
-	for k, dst := range map[string]any{keyIA: &s.IA, keyWhatsApp: &s.WhatsApp, keyWompi: &s.Wompi, keyDropi: &s.Dropi, keyGeneral: &s.General, keyNegocio: &s.Negocio} {
+	for k, dst := range map[string]any{keyIA: &s.IA, keyWhatsApp: &s.WhatsApp, keyWompi: &s.Wompi, keyDropi: &s.Dropi, keyNgrok: &s.Ngrok, keyGeneral: &s.General, keyNegocio: &s.Negocio} {
 		if err := get(k, dst); err != nil {
 			return s, fmt.Errorf("leer configuración %q: %w", k, err)
 		}

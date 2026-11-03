@@ -334,3 +334,90 @@ func TestWaitBeforeAnsweringDefaultsToOneMinute(t *testing.T) {
 		t.Fatal("no respetó el valor configurado")
 	}
 }
+
+func TestCleanNgrokToken(t *testing.T) {
+	for in, want := range map[string]string{
+		"2abcDEF_ghi":                          "2abcDEF_ghi",
+		"  2abcDEF_ghi \n":                     "2abcDEF_ghi",
+		"ngrok config add-authtoken 2abcDEF_x": "2abcDEF_x",
+		`"2abcDEF_x"`:                          "2abcDEF_x",
+		"":                                     "",
+		"   ":                                  "",
+	} {
+		if got := CleanNgrokToken(in); got != want {
+			t.Errorf("CleanNgrokToken(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestCleanNgrokDomain(t *testing.T) {
+	for in, want := range map[string]string{
+		"mi-app.ngrok-free.app":           "mi-app.ngrok-free.app",
+		"https://Mi-App.ngrok-free.app/":  "mi-app.ngrok-free.app",
+		" http://x.ngrok.dev/webhook?a=1": "x.ngrok.dev",
+		"":                                "",
+	} {
+		if got := CleanNgrokDomain(in); got != want {
+			t.Errorf("CleanNgrokDomain(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestNgrokSettingsValidateAndNormalise(t *testing.T) {
+	m, _ := open(t)
+	ctx := context.Background()
+	if err := m.Update(ctx, func(s *Settings) error {
+		s.Ngrok = Ngrok{Token: "ngrok config add-authtoken 2tokenNgrok", Domain: "https://Fijo.ngrok-free.app/", Enabled: true}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	n := m.Get().Ngrok
+	if n.Token != "2tokenNgrok" || n.Domain != "fijo.ngrok-free.app" || !n.Enabled {
+		t.Fatalf("not normalised: %+v", n)
+	}
+	for name, fn := range map[string]func(*Settings){
+		"activo sin token":     func(s *Settings) { s.Ngrok = Ngrok{Enabled: true} },
+		"dominio invalido":     func(s *Settings) { s.Ngrok = Ngrok{Token: "t", Domain: "sin punto"} },
+		"token igual al panel": func(s *Settings) { s.General.AdminToken = "panel-token-123"; s.Ngrok = Ngrok{Token: "panel-token-123"} },
+	} {
+		if err := m.Update(ctx, func(s *Settings) error { fn(s); return nil }); err == nil {
+			t.Errorf("%s: must be rejected", name)
+		}
+	}
+	if m.Get().Ngrok.Token != "2tokenNgrok" {
+		t.Fatal("a rejected update changed the saved token")
+	}
+}
+
+func TestNgrokTokenNeverInPublicView(t *testing.T) {
+	m, _ := open(t)
+	_ = m.Update(context.Background(), func(s *Settings) error {
+		s.Ngrok = Ngrok{Token: "2SECRETngrokTOKEN99", Enabled: true}
+		return nil
+	})
+	v := m.Get().Public("http://x")
+	if strings.Contains(mustJSON(t, v), "2SECRETngrokTOKEN99") {
+		t.Fatal("ngrok token leaked in the public view")
+	}
+	if !v.Ngrok.Token.Set || !v.Ngrok.Active {
+		t.Fatalf("view: %+v", v.Ngrok)
+	}
+}
+
+func TestWebhookBasePrefersTunnelThenPublicThenOrigin(t *testing.T) {
+	m, _ := open(t)
+	_ = m.Update(context.Background(), func(s *Settings) error { return nil })
+	s := m.Get()
+	if v := s.PublicWith("", "http://localhost:8080"); v.General.WebhookURL != "http://localhost:8080/webhook/whatsapp" || v.General.WebhookSource != "local" {
+		t.Fatalf("local: %+v", v.General)
+	}
+	s.General.PublicURL = "https://mi.dominio.com"
+	if v := s.PublicWith("", "http://localhost:8080"); v.General.WebhookSource != "publica" || v.Wompi.EventsURL != "https://mi.dominio.com/webhook/wompi" {
+		t.Fatalf("publica: %+v", v.General)
+	}
+	v := s.PublicWith("https://t.ngrok-free.app/", "http://localhost:8080")
+	if v.General.WebhookSource != "tunel" || v.WhatsApp.WebhookURL != "https://t.ngrok-free.app/webhook/whatsapp" || v.Wompi.EventsURL != "https://t.ngrok-free.app/webhook/wompi" {
+		t.Fatalf("tunel: %+v %+v", v.General, v.WhatsApp)
+	}
+}

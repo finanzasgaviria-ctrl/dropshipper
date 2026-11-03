@@ -13,6 +13,7 @@ import (
 	"github.com/michiTrader/dropshipper/motor/internal/llm"
 	"github.com/michiTrader/dropshipper/motor/internal/payments"
 	"github.com/michiTrader/dropshipper/motor/internal/settings"
+	"github.com/michiTrader/dropshipper/motor/internal/tunnel"
 	"github.com/michiTrader/dropshipper/motor/internal/whatsapp"
 	"github.com/michiTrader/dropshipper/motor/internal/whatsweb"
 )
@@ -26,6 +27,9 @@ type Hub struct {
 	// Web is the WhatsApp Web session (nil in the command-line tool). The hub
 	// switches it on or off according to the selected channel.
 	Web *whatsweb.Manager
+	// Tunnel is the ngrok public address for the webhooks (nil in the
+	// command-line tool). The hub opens or closes it with the settings.
+	Tunnel *tunnel.Manager
 
 	mu    sync.RWMutex
 	cur   settings.Settings
@@ -53,6 +57,7 @@ func (h *Hub) Apply(s settings.Settings) {
 	}
 	h.mu.Unlock()
 	h.Web.Configure(s.WhatsApp.UsesWeb(), nil)
+	h.Tunnel.Configure(s.Ngrok.Enabled, s.Ngrok.Token, s.Ngrok.Domain)
 
 	if p, ok := s.Active(); ok && p.Ready() {
 		c := llm.NewClient(p.BaseURL, p.APIKey)
@@ -61,6 +66,18 @@ func (h *Hub) Apply(s settings.Settings) {
 	} else {
 		h.AI.Set(nil, "", nil)
 	}
+}
+
+// PublicBase is the address the outside world reaches the webhooks at: the live
+// ngrok tunnel when it is up, otherwise the saved public address (may be "").
+func (h *Hub) PublicBase() (base, source string) {
+	if u := h.Tunnel.URL(); u != "" {
+		return u, "tunel"
+	}
+	if u := h.Settings().General.PublicURL; u != "" {
+		return u, "publica"
+	}
+	return "", "local"
 }
 
 // Settings returns the settings last applied.

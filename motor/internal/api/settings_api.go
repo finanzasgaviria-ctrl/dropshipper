@@ -42,6 +42,7 @@ func (s *Server) settingsRoutes(api *http.ServeMux) {
 	api.HandleFunc("POST /api/ia/probar", s.testProvider)
 	api.HandleFunc("POST /api/ia/modelos", s.listModels)
 	s.dropiRoutes(api)
+	s.ngrokRoutes(api)
 }
 
 // origin is the scheme://host the browser used, to show webhook URLs when no
@@ -55,7 +56,7 @@ func origin(r *http.Request) string {
 }
 
 func (s *Server) getSettings(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, 200, s.Settings.Get().Public(origin(r)))
+	writeJSON(w, 200, s.Settings.Get().PublicWith(s.Hub.Tunnel.URL(), origin(r)))
 }
 
 // keep returns old when the browser sent an empty secret (= "do not change").
@@ -597,7 +598,7 @@ func (s *Server) status(w http.ResponseWriter, r *http.Request) {
 	wompi := s.Hub.Wompi() != nil
 	pagoListo := n.Pagos.Metodo == "wompi" && wompi ||
 		n.Pagos.Metodo == "manual" && (n.Pagos.Manual.LlaveBreB != "" || n.Pagos.Manual.NumeroCuenta != "")
-	base := strings.TrimRight(st.General.PublicURL, "/")
+	base, source := s.Hub.PublicBase()
 	if base == "" {
 		base = origin(r)
 	}
@@ -611,7 +612,7 @@ func (s *Server) status(w http.ResponseWriter, r *http.Request) {
 		"whatsapp": map[string]any{
 			"canal": st.WhatsApp.Channel(), "configurado": s.Hub.Available(), "nube_configurada": st.WhatsApp.Enabled(),
 			"web": s.Hub.Web.Info(), "verify_token": st.WhatsApp.VerifyToken != "",
-			"firma_verificada": st.WhatsApp.AppSecret != "", "webhook_url": base + "/webhook/whatsapp",
+			"firma_verificada": st.WhatsApp.AppSecret != "", "webhook_url": base + "/webhook/whatsapp", "webhook_fuente": source,
 		},
 		"pagos": map[string]any{
 			"metodo": n.Pagos.Metodo, "listo": pagoListo, "wompi": wompi,
@@ -625,6 +626,7 @@ func (s *Server) status(w http.ResponseWriter, r *http.Request) {
 		"requiere_token": st.General.AdminToken != "",
 		"acceso_local":   isLocal(r),
 		"url_publica":    st.General.PublicURL,
+		"tunel":          s.Hub.Tunnel.Info(),
 		"iniciado":       s.Started,
 		"version":        Version,
 	})
