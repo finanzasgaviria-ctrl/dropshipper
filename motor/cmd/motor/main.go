@@ -34,6 +34,7 @@ import (
 	"github.com/michiTrader/dropshipper/motor/internal/settings"
 	"github.com/michiTrader/dropshipper/motor/internal/shipping"
 	"github.com/michiTrader/dropshipper/motor/internal/store"
+	"github.com/michiTrader/dropshipper/motor/internal/tunnel"
 	"github.com/michiTrader/dropshipper/motor/internal/whatsweb"
 )
 
@@ -110,6 +111,9 @@ func serve(dir string, lg *log.Logger) error {
 	// WhatsApp Web (linked phone). It stays idle until that channel is selected.
 	h.Web = whatsweb.New(cfg.DataDir, mediaDir, lg)
 	defer h.Web.Close()
+	// Public address for the webhooks (ngrok). Idle until it is switched on in the panel.
+	h.Tunnel = tunnel.New(lg, nil)
+	defer h.Tunnel.Close()
 	live := config.NewLive(a.set.Get().Negocio)
 	a.set.OnChange(func(s settings.Settings) {
 		h.Apply(s)
@@ -153,6 +157,9 @@ func serve(dir string, lg *log.Logger) error {
 		Settings: a.set, Hub: h, Store: a.st, Engine: engine, Sales: sv, Catalog: a.cat, Zones: zones, Shipping: ship,
 		MediaDir: mediaDir, Log: lg, Started: time.Now().UTC(),
 	}
+	// Through the tunnel only the webhooks are reachable, never the panel.
+	h.Tunnel.SetHandler(srv.Handler())
+	h.Tunnel.OnChange(func() { engine.Events.Publish(convo.Event{Type: "whatsapp"}) })
 	httpSrv := &http.Server{
 		Addr:              fmt.Sprintf("0.0.0.0:%d", cfg.Port),
 		Handler:           srv.Handler(),
@@ -234,7 +241,10 @@ func printBanner(lg *log.Logger, a *app, h *hub.Hub, port int) {
 		lg.Printf("[aviso] Sin token: el panel solo abre desde este computador. Para exponerlo: motor token generar")
 	}
 	lg.Printf("Panel: http://localhost:%d", port)
-	if s.General.PublicURL != "" {
+	switch {
+	case s.Ngrok.Enabled:
+		lg.Printf("Túnel ngrok activado: conectando (la dirección pública aparece en el panel > Conexiones y aquí al conectar)")
+	case s.General.PublicURL != "":
 		lg.Printf("Webhook WhatsApp: %s/webhook/whatsapp", s.General.PublicURL)
 	}
 }

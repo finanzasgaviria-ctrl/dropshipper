@@ -34,8 +34,8 @@ async function renderConexiones() {
   const root = $('#conexiones');
   root.innerHTML = `
     <div class="view-head"><div><h2>Conexiones</h2><div class="sub">Todo lo que el Motor necesita para vender. Cada bloque tiene su botón de prueba.</div></div></div>
-    <div id="cnIA"></div><div id="cnDropi" style="margin-top:16px"></div><div id="cnWA" style="margin-top:16px"></div><div id="cnPay" style="margin-top:16px"></div><div id="cnSec" style="margin-top:16px"></div>`;
-  drawIA(); drawDropi(); drawWhatsApp(); drawPagos(); drawSeguridad();
+    <div id="cnIA"></div><div id="cnDropi" style="margin-top:16px"></div><div id="cnWA" style="margin-top:16px"></div><div id="cnNgrok" style="margin-top:16px"></div><div id="cnPay" style="margin-top:16px"></div><div id="cnSec" style="margin-top:16px"></div>`;
+  drawIA(); drawDropi(); drawWhatsApp(); drawNgrok(); drawPagos(); drawSeguridad();
   refreshBadges();
 }
 
@@ -301,8 +301,7 @@ function drawWACloud() {
         ${secretField('app_secret', 'Secreto de la app (recomendado)', w.app_secret, { help: 'Permite verificar que los mensajes entrantes vienen de Meta.' })}
         ${fld('graph_version', 'Versión de la API', w.graph_version, { ph: 'v21.0' })}
       </div>
-      <div class="field"><span style="font-size:12px;font-weight:600;color:var(--text-2)">Dirección del webhook (pégala en Meta)</span>${copyRow(w.webhook_url)}
-        ${CN.cfg.general.url_publica ? '' : `<small class="muted">Usa tu dirección pública para que Meta pueda llegar. Defínela en Seguridad y acceso.</small>`}</div>
+      <div class="field"><span style="font-size:12px;font-weight:600;color:var(--text-2)">Dirección del webhook (pégala en Meta)</span><div id="waHook">${waHookHTML(w, CN.cfg.general)}</div></div>
       <div class="testres" id="waTest"></div>
       <div class="form-actions"><button class="btn" type="button" id="waTestBtn">${ic('refresh', 14)} Probar conexión</button><span class="spacer"></span>
         ${w.configurado ? '<button class="btn danger" type="button" id="waDel">Desconectar</button>' : ''}<button class="btn primary" type="submit">Guardar</button></div>
@@ -320,6 +319,103 @@ function drawWACloud() {
   if (d) d.onclick = async () => {
     if (!confirm('¿Desconectar WhatsApp? Se borran el token y los secretos guardados.')) return;
     try { await del('/api/ajustes/whatsapp'); toast('WhatsApp desconectado.'); renderConexiones(); } catch (err) { toast(err.message, true); }
+  };
+}
+
+// Dirección del webhook según de dónde salga: túnel de ngrok, dirección pública guardada o solo este equipo.
+function waHookHTML(w, g) {
+  const src = g.webhook_fuente;
+  const hint = src === 'tunel' ? `<small class="muted">Es la dirección de tu túnel de ngrok: Meta sí puede llegar a ella.</small>`
+    : src === 'publica' ? `<small class="muted">Es la dirección pública que guardaste en Seguridad y acceso.</small>`
+    : notice('warn', '<b>Esta dirección solo existe en tu computador</b> y Meta no puede llegar a ella. Activa el túnel de ngrok en el bloque de abajo (pegas tu token y listo) y aquí aparecerá la dirección pública correcta.');
+  return `${copyRow(w.webhook_url)}${hint}`;
+}
+
+// =============== Túnel público (ngrok) ===============
+const NG_STATES = { apagado: ['', 'Apagado'], conectando: ['warn', 'Conectando'], conectado: ['ok', 'Conectado'], error: ['bad', 'Error'] };
+let ngTimer = null;
+function stopNgPoll() { if (ngTimer) { clearInterval(ngTimer); ngTimer = null; } }
+
+function drawNgrok() {
+  const box = $('#cnNgrok');
+  if (!box) return;
+  stopNgPoll();
+  const n = CN.cfg.ngrok; const t = (CN.est && CN.est.tunel) || { estado: 'apagado' };
+  paintNgrok(box, n, t);
+  if (n.activo) {
+    ngTimer = setInterval(async () => {
+      if (!$('#cnNgrok') || !$('#ngForm')) { stopNgPoll(); return; }
+      try {
+        const nt = await api('/api/ngrok/estado');
+        const was = (CN.est.tunel || {});
+        if (nt.estado !== was.estado || nt.url !== was.url || nt.error !== was.error) {
+          CN.est.tunel = nt;
+          paintNgrok($('#cnNgrok'), CN.cfg.ngrok, nt);
+          refreshWaHook();
+        }
+      } catch (_) { /* reintenta */ }
+    }, 2500);
+  }
+}
+
+async function refreshWaHook() {
+  const el = $('#waHook');
+  if (!el) return;
+  try { CN.cfg = await api('/api/ajustes'); el.innerHTML = waHookHTML(CN.cfg.whatsapp, CN.cfg.general); hydrateIcons(el); } catch (_) { /* nada */ }
+}
+
+function paintNgrok(box, n, t) {
+  const [cls, label] = NG_STATES[t.estado] || ['', t.estado];
+  const on = n.activo;
+  let state = '';
+  if (on && t.estado === 'conectado') {
+    state = `${notice('ok', '<b>Túnel activo.</b> Estas son las direcciones que debes pegar en Meta y en Wompi:')}
+      <div class="field"><span style="font-size:12px;font-weight:600;color:var(--text-2)">Webhook de WhatsApp (Meta)</span>${copyRow(t.url + '/webhook/whatsapp')}</div>
+      <div class="field"><span style="font-size:12px;font-weight:600;color:var(--text-2)">Eventos de Wompi</span>${copyRow(t.url + '/webhook/wompi')}</div>
+      ${n.dominio ? '' : notice('warn', 'No tienes un dominio fijo: <b>esta dirección cambia cada vez que reinicias el Motor</b> y tendrías que actualizarla en Meta. Reclama tu dominio gratis en ngrok (Universal Gateway, Domains) y pégalo arriba.')}`;
+  } else if (on && t.estado === 'error') {
+    state = notice('bad', esc(t.error || 'No se pudo abrir el túnel.'));
+  } else if (on) {
+    state = notice('info', esc(t.error || 'Conectando con ngrok...'));
+  }
+  box.innerHTML = `<div class="card">
+    <div class="card-head"><span class="ico">${ic('link', 18)}</span><div><h3>Dirección pública (ngrok) <span class="tag ${cls}">${esc(label)}</span></h3>
+      <div class="desc">Meta y Wompi necesitan una dirección en internet para avisarle al Motor. Pega aquí tu token de ngrok y el Motor abre el túnel solo, sin terminal.</div></div></div>
+    ${state}
+    <form id="ngForm" autocomplete="off">
+      <div class="fgrid">
+        ${secretField('token', 'Authtoken de ngrok', n.token, { ph: 'Pégalo aquí', help: 'Lo copias en dashboard.ngrok.com, sección Your Authtoken. Si copiaste el comando completo (ngrok config add-authtoken ...), también sirve.' })}
+        ${fld('dominio', 'Dominio fijo (recomendado)', n.dominio, { ph: 'mi-tienda.ngrok-free.app', help: 'Gratis en ngrok: Domains. Así la dirección no cambia y no tienes que volver a configurar Meta.' })}
+      </div>
+      <div class="notice info" style="margin-top:10px">${ic('shield', 16)}<div>Por el túnel solo pasan los webhooks de WhatsApp y Wompi. <b>Tu panel nunca queda expuesto en internet.</b></div></div>
+      <div class="form-actions">
+        ${on ? '<button class="btn" type="button" id="ngRetry">' + ic('refresh', 14) + ' Reintentar</button><button class="btn" type="button" id="ngOff">Apagar túnel</button>' : ''}
+        <span class="spacer"></span>
+        ${n.token.configurada ? '<button class="btn danger" type="button" id="ngDel">Quitar token</button>' : ''}
+        <button class="btn primary" type="submit">${on ? 'Guardar cambios' : 'Guardar y activar'}</button></div>
+    </form></div>`;
+  hydrateIcons(box);
+  const f = $('#ngForm');
+  f.onsubmit = async (e) => {
+    e.preventDefault();
+    await busy(e.submitter, async () => {
+      const d = formData(f);
+      if (!d.token.trim() && !n.token.configurada) { toast('Pega primero tu Authtoken de ngrok.', true); return; }
+      try {
+        await put('/api/ajustes/ngrok', { token: d.token, dominio: d.dominio, activo: true });
+        toast('Guardado. Conectando el túnel...');
+        await renderConexiones();
+      } catch (err) { toast(err.message, true); }
+    });
+  };
+  const retry = $('#ngRetry');
+  if (retry) retry.onclick = (e) => busy(e.currentTarget, async () => { try { await post('/api/ngrok/reintentar', {}); await renderConexiones(); } catch (err) { toast(err.message, true); } });
+  const off = $('#ngOff');
+  if (off) off.onclick = async () => { try { await put('/api/ajustes/ngrok', { activo: false }); toast('Túnel apagado.'); renderConexiones(); } catch (err) { toast(err.message, true); } };
+  const del_ = $('#ngDel');
+  if (del_) del_.onclick = async () => {
+    if (!confirm('¿Quitar el token de ngrok? El túnel se apaga y Meta dejará de poder avisarle al Motor.')) return;
+    try { await del('/api/ajustes/ngrok'); toast('Token quitado.'); renderConexiones(); } catch (err) { toast(err.message, true); }
   };
 }
 

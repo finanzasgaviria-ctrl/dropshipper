@@ -134,19 +134,34 @@ Notas importantes:
 > Usa un numero **dedicado**. Ese numero **no puede** estar al mismo tiempo en la app normal de WhatsApp o
 > WhatsApp Business. Si ya lo tienes instalado ahi, primero borra la cuenta de esa app.
 
-### 5.1 Direccion publica (para recibir mensajes)
+### 5.1 Direccion publica con ngrok (para recibir mensajes)
 
-Meta necesita una URL **https** publica. Desde tu PC, lo mas simple es Cloudflare Tunnel:
+Meta y Wompi necesitan una URL **https** publica para avisarle al Motor. La direccion `http://localhost:8080/...` que
+ves en el panel **solo existe en tu computador**: Meta no puede llegar a ella. Con ngrok el Motor abre el tunel por ti,
+**sin terminal**:
 
-```bash
-cloudflared tunnel --url http://localhost:8080
-```
+1. Crea una cuenta gratis en <https://dashboard.ngrok.com> y copia tu **Authtoken** (seccion *Your Authtoken*).
+2. Recomendado: en ngrok > **Domains** reclama tu dominio gratis (algo como `mi-tienda.ngrok-free.app`). Asi la
+   direccion **no cambia** al reiniciar y no tienes que tocar Meta de nuevo.
+3. En el panel: **Conexiones > Direccion publica (ngrok)**. Pega el Authtoken (sirve tambien el comando completo
+   `ngrok config add-authtoken ...`), escribe el dominio si lo reclamaste y pulsa **Guardar y activar**.
+4. Cuando el estado diga **Conectado** el panel muestra las direcciones exactas para copiar:
+   `https://TU-DOMINIO/webhook/whatsapp` (Meta) y `https://TU-DOMINIO/webhook/wompi` (Wompi). El bloque de WhatsApp
+   tambien cambia solo a esa direccion.
 
-Te da una URL como `https://algo.trycloudflare.com` (cambia cada vez que reinicias el tunel; para algo estable usa
-un tunel con nombre o un servidor). Guardala en **Conexiones > Seguridad y acceso > Direccion publica**.
-
-Con ella, el panel te muestra las direcciones exactas de los webhooks para copiar:
-`.../webhook/whatsapp` y `.../webhook/wompi`.
+Cosas utiles:
+- **Tu panel no queda expuesto.** Por el tunel solo pasan `/webhook/*` y `/salud`; todo lo demas responde 404 desde
+  internet. El panel sigue abriendose solo desde tu computador (o con tu token de acceso).
+- Si ya tenias `ngrok` abierto en una terminal con la misma cuenta, puede que la cuenta gratis no deje una segunda
+  sesion o que el dominio ya este en uso: el panel te lo dice. Cierra ese ngrok y pulsa **Reintentar**.
+- Sin dominio fijo, ngrok da una direccion al azar que **cambia cada vez que reinicias el Motor** y habria que
+  actualizarla en Meta. Por eso conviene el dominio fijo.
+- **Apagar tunel** lo detiene pero conserva el token; **Quitar token** lo borra.
+- El tunel solo funciona mientras el Motor esta encendido. Para vender 24/7 el Motor debe estar siempre prendido
+  (por ejemplo en un servidor); ahi ya no necesitas ngrok y puedes guardar la direccion en **Seguridad y acceso**.
+- Si prefieres otro tunel (Cloudflare Tunnel, tu propio dominio), pega su direccion en **Conexiones > Seguridad y
+  acceso > Direccion publica**. El tunel de ngrok, cuando esta conectado, tiene prioridad sobre esa direccion.
+- El Authtoken se guarda en la base de datos del Motor y nunca se vuelve a mostrar completo en el panel.
 
 ### 5.2 Crear la app en Meta
 

@@ -84,11 +84,22 @@ func DropiBase(sandbox bool) string {
 	return "https://api.dropi.co/integrations"
 }
 
+// NgrokView is the tunnel section (token masked).
+type NgrokView struct {
+	Token  Secret `json:"token"`
+	Domain string `json:"dominio"`
+	Active bool   `json:"activo"`
+}
+
 // GeneralView is the security/general section.
 type GeneralView struct {
 	PublicURL  string `json:"url_publica"`
 	Token      Secret `json:"token"`
 	WebhookURL string `json:"webhook_url"`
+	// WebhookSource says where WebhookURL comes from: "tunel" (live ngrok),
+	// "publica" (saved public address) or "local" (this computer only: Meta
+	// cannot reach it).
+	WebhookSource string `json:"webhook_fuente"`
 }
 
 // View is the full, secret-free settings document sent to the browser.
@@ -97,15 +108,26 @@ type View struct {
 	WhatsApp WhatsAppView `json:"whatsapp"`
 	Wompi    WompiView    `json:"wompi"`
 	Dropi    DropiView    `json:"dropi"`
+	Ngrok    NgrokView    `json:"ngrok"`
 	General  GeneralView  `json:"general"`
 	Negocio  any          `json:"negocio"`
 }
 
 // Public builds the masked view. webhookBase is the URL to show for hooks
-// (public URL, or the request origin when none is set).
-func (s Settings) Public(webhookBase string) View {
-	base := strings.TrimRight(s.General.PublicURL, "/")
+// when neither a tunnel nor a public URL exists (the request origin).
+func (s Settings) Public(webhookBase string) View { return s.PublicWith("", webhookBase) }
+
+// PublicWith is Public with a live tunnel address, which wins over the saved
+// public URL: it is the address Meta can really reach right now.
+func (s Settings) PublicWith(tunnelURL, webhookBase string) View {
+	source := "tunel"
+	base := strings.TrimRight(tunnelURL, "/")
 	if base == "" {
+		source = "publica"
+		base = strings.TrimRight(s.General.PublicURL, "/")
+	}
+	if base == "" {
+		source = "local"
 		base = strings.TrimRight(webhookBase, "/")
 	}
 	v := View{Negocio: s.Negocio}
@@ -127,6 +149,7 @@ func (s Settings) Public(webhookBase string) View {
 	d := s.Dropi
 	v.Dropi = DropiView{Token: NewSecret(d.Token), Sandbox: d.Sandbox, OriginDept: d.OriginDept, OriginCity: d.OriginCity,
 		Configured: d.Enabled(), BaseURL: DropiBase(d.Sandbox)}
-	v.General = GeneralView{PublicURL: s.General.PublicURL, Token: NewSecret(s.General.AdminToken), WebhookURL: base + "/webhook/whatsapp"}
+	v.Ngrok = NgrokView{Token: NewSecret(s.Ngrok.Token), Domain: s.Ngrok.Domain, Active: s.Ngrok.Enabled}
+	v.General = GeneralView{PublicURL: s.General.PublicURL, Token: NewSecret(s.General.AdminToken), WebhookURL: base + "/webhook/whatsapp", WebhookSource: source}
 	return v
 }

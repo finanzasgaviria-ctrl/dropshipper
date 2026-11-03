@@ -21,6 +21,13 @@ El **Motor** (`motor/`) es un solo programa en Go que:
 
 Puedes cambiar de canal en cualquier momento; las credenciales de la API oficial se conservan.
 
+### Direccion publica con ngrok (para Meta y Wompi)
+
+La direccion `localhost:8080/webhook/...` solo existe en tu computador. En **Conexiones > Direccion publica (ngrok)** pegas
+tu Authtoken de ngrok (y, si quieres, tu dominio fijo gratis) y el Motor abre el tunel solo, sin terminal. El panel muestra
+las direcciones exactas del webhook de WhatsApp y de Wompi. Por el tunel **solo pasan los webhooks**: el panel nunca queda
+expuesto. Detalles en [`docs/CONFIGURACION.md`](docs/CONFIGURACION.md).
+
 ## Estado del proyecto por fases
 
 | Fase | Estado |
@@ -71,6 +78,7 @@ motor/
 │   ├── convo/            # orquestador: agrupar mensajes, Yo tomo, comprobantes, eventos en vivo
 │   ├── whatsapp/         # WhatsApp Cloud API oficial + verificación de firma
 │   ├── whatsweb/         # WhatsApp Web (whatsmeow): vinculación por QR, envío y recepción
+│   ├── tunnel/           # túnel ngrok propio del Motor: dirección pública solo para los webhooks
 │   ├── payments/         # Wompi: links de pago + verificación de eventos
 │   ├── store/            # SQLite (sin CGO, compila igual en Windows)
 │   └── api/              # API HTTP + panel web embebido
