@@ -56,6 +56,15 @@ type Option struct {
 	ReturnRate        float64 `json:"tasa_devolucion"`
 	Viable            bool    `json:"viable"`
 	Best              bool    `json:"mejor"`
+	// Days is the delivery time in days; DaysSource says if it is Dropi's
+	// number ("dropi") or the carrier's typical time you configured ("estimado").
+	Days       int    `json:"dias"`
+	DaysSource string `json:"fuente_dias"`
+	// WithinLimit is false when the carrier is slower than envio.max_dias.
+	WithinLimit bool `json:"dentro_del_limite"`
+	// Fastest / Cheapest mark the quickest and the lowest-freight carrier.
+	Fastest  bool `json:"mas_rapida"`
+	Cheapest bool `json:"mas_barata"`
 }
 
 // Comparison is the full answer.
@@ -65,6 +74,12 @@ type Comparison struct {
 	// Source says where the freight numbers come from: "dropi" or "estimado".
 	Source  string `json:"fuente_flete"`
 	Warning string `json:"advertencia,omitempty"`
+	// Criterion is how Best was chosen (rentable | rapido | barato) and
+	// MaxDays the delivery limit applied (0 = none).
+	Criterion string `json:"criterio"`
+	MaxDays   int    `json:"max_dias"`
+	// NoneInTime is true when no carrier meets MaxDays (Best is then the fastest).
+	NoneInTime bool `json:"ninguna_a_tiempo,omitempty"`
 }
 
 // Service compares carriers.
@@ -102,6 +117,11 @@ func (s *Service) now() time.Time {
 }
 
 // Compare prices every active carrier for the scenario, best first.
+//
+// Best is chosen so that a slow carrier is never recommended when a faster one
+// exists: first the carriers that arrive within envio.max_dias, then (among
+// those) the owner's criterion: most profitable, fastest or cheapest. If none
+// arrives in time, the fastest wins and the answer says so.
 func (s *Service) Compare(ctx context.Context, sc Scenario) Comparison {
 	n := s.neg()
 	var out Comparison
@@ -113,26 +133,100 @@ func (s *Service) Compare(ctx context.Context, sc Scenario) Comparison {
 	} else {
 		freights = s.fallback(n, sc)
 	}
+	out.Criterion, out.MaxDays = n.Envio.Criterio, n.Envio.MaxDias
 	for _, f := range freights {
 		t, _ := n.Carrier(f.name)
-		out.Options = append(out.Options, price(n, sc, t, f.freight))
-	}
-	sort.SliceStable(out.Options, func(i, j int) bool {
-		a, b := out.Options[i], out.Options[j]
-		if a.ExpectedProfit != b.ExpectedProfit {
-			return a.ExpectedProfit > b.ExpectedProfit
+		o := price(n, sc, t, f.freight)
+		o.Days, o.DaysSource = f.days, SourceDropi
+		if o.Days <= 0 {
+			o.Days, o.DaysSource = t.EstimatedDays(sc.Risk), SourceEstimate
 		}
-		if a.Freight != b.Freight {
+		o.WithinLimit = n.Envio.MaxDias <= 0 || o.Days <= n.Envio.MaxDias
+		out.Options = append(out.Options, o)
+	}
+	if len(out.Options) == 0 {
+		return out
+	}
+	markFastestCheapest(out.Options)
+
+	anyInTime := false
+	for _, o := range out.Options {
+		anyInTime = anyInTime || o.WithinLimit
+	}
+	out.NoneInTime = !anyInTime
+	if out.NoneInTime {
+		extra := fmt.Sprintf("Ninguna transportadora llega en %d días o menos a ese destino; se recomienda la más rápida.", n.Envio.MaxDias)
+		out.Warning = strings.TrimSpace(out.Warning + " " + extra)
+	}
+	crit := n.Envio.Criterio
+	sort.SliceStable(out.Options, func(i, j int) bool {
+		return better(n, crit, out.NoneInTime, out.Options[i], out.Options[j])
+	})
+	out.Options[0].Best = true
+	best := out.Options[0]
+	out.Best = &best
+	return out
+}
+
+func markFastestCheapest(opts []Option) {
+	fast, cheap := 0, 0
+	for i, o := range opts {
+		if o.Days < opts[fast].Days || (o.Days == opts[fast].Days && o.Freight < opts[fast].Freight) {
+			fast = i
+		}
+		if o.Freight < opts[cheap].Freight || (o.Freight == opts[cheap].Freight && o.Days < opts[cheap].Days) {
+			cheap = i
+		}
+	}
+	opts[fast].Fastest = true
+	opts[cheap].Cheapest = true
+}
+
+// better reports whether a should be listed before b.
+func better(n config.Negocio, crit string, noneInTime bool, a, b Option) bool {
+	if noneInTime {
+		// Nobody meets the limit: speed first, then profit.
+		if a.Days != b.Days {
+			return a.Days < b.Days
+		}
+		return profitFirst(n, a, b)
+	}
+	if a.WithinLimit != b.WithinLimit {
+		return a.WithinLimit
+	}
+	switch crit {
+	case config.CriterioRapido, config.CriterioBarato:
+		// Never recommend a carrier that loses money if another one does not.
+		if a.Viable != b.Viable {
+			return a.Viable
+		}
+		if crit == config.CriterioRapido && a.Days != b.Days {
+			return a.Days < b.Days
+		}
+		if crit == config.CriterioBarato && a.Freight != b.Freight {
 			return a.Freight < b.Freight
 		}
-		return prio(n, a.ID) < prio(n, b.ID)
-	})
-	if len(out.Options) > 0 {
-		out.Options[0].Best = true
-		best := out.Options[0]
-		out.Best = &best
+		if crit == config.CriterioRapido && a.Freight != b.Freight {
+			return a.Freight < b.Freight
+		}
+		if a.Days != b.Days {
+			return a.Days < b.Days
+		}
 	}
-	return out
+	return profitFirst(n, a, b)
+}
+
+func profitFirst(n config.Negocio, a, b Option) bool {
+	if a.ExpectedProfit != b.ExpectedProfit {
+		return a.ExpectedProfit > b.ExpectedProfit
+	}
+	if a.Days != b.Days {
+		return a.Days < b.Days
+	}
+	if a.Freight != b.Freight {
+		return a.Freight < b.Freight
+	}
+	return prio(n, a.ID) < prio(n, b.ID)
 }
 
 func prio(n config.Negocio, id string) int {
@@ -147,6 +241,7 @@ func prio(n config.Negocio, id string) int {
 type carrierFreight struct {
 	name    string
 	freight int64
+	days    int // 0 = Dropi did not say
 }
 
 func price(n config.Negocio, sc Scenario, t config.Transportadora, freight int64) Option {
@@ -209,7 +304,7 @@ func (s *Service) freights(ctx context.Context, n config.Negocio, sc Scenario) (
 			continue
 		}
 		if cur, ok := best[t.ID]; !ok || qu.Freight < cur.freight {
-			best[t.ID] = carrierFreight{name: t.Nombre, freight: qu.Freight}
+			best[t.ID] = carrierFreight{name: t.Nombre, freight: qu.Freight, days: qu.Days}
 		}
 	}
 	if len(best) == 0 {

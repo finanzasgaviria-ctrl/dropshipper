@@ -41,6 +41,7 @@ const ICONS = {
   hand: '<path d="M8 13V5.5a1.5 1.5 0 0 1 3 0V11M11 10.5V4a1.5 1.5 0 0 1 3 0v7M14 11V5.5a1.5 1.5 0 0 1 3 0V14a7 7 0 0 1-7 7c-3 0-4.5-1.5-6.2-4.4L3 15a1.6 1.6 0 0 1 2.7-1.7L8 15.5"/>',
   bot: '<rect x="4" y="8" width="16" height="12" rx="3"/><path d="M12 4v4M9 14h.01M15 14h.01M2 14h2M20 14h2"/>',
   wallet: '<path d="M3 7a2 2 0 0 1 2-2h13v4"/><path d="M3 7v11a2 2 0 0 0 2 2h14a1 1 0 0 0 1-1V9a1 1 0 0 0-1-1H5a2 2 0 0 1-2-1z"/><path d="M16 14h.01"/>',
+  clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
   truck: '<path d="M2 6h11v10H2zM13 9h4l4 4v3h-8"/><circle cx="6.5" cy="18" r="1.8"/><circle cx="17" cy="18" r="1.8"/>',
   copy: '<rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h8"/>',
   edit: '<path d="M4 20h4L19 9a2.8 2.8 0 0 0-4-4L4 16z"/><path d="m13.5 6.5 4 4"/>',
@@ -349,7 +350,7 @@ function orderKV(o) {
     <dt>Celular</dt><dd>${esc(o.customer_phone || '-')}</dd>
     <dt>Dirección</dt><dd>${esc(addr || '-')}</dd>
     <dt>Barrio / ciudad</dt><dd>${esc(o.neighborhood || '-')} · ${esc(o.city || '-')}, ${esc(o.department || '-')}</dd>
-    <dt>Transportadora</dt><dd>${esc(o.carrier || '-')} ${carrierSrc(o)}</dd>
+    <dt>Transportadora</dt><dd>${esc(o.carrier || '-')} ${deliveryTag(o)} ${carrierSrc(o)}</dd>
     <dt>Regla de zona</dt><dd class="small">${esc(o.zone_reason || '-')}</dd>
     ${o.notes ? `<dt>Notas</dt><dd class="small">${esc(o.notes)}</dd>` : ''}
   </dl>`;
@@ -363,29 +364,87 @@ function carrierSrc(o) {
   return '<span class="small muted">(sugerida)</span>';
 }
 
-function carrierOptions(o) {
-  const p = profitOf(o); const list = p.transportadoras || [];
-  if (list.length < 2) return p.advertencia_transportadora ? `<div class="small" style="color:var(--warn)">${ic('alert', 13)} ${esc(p.advertencia_transportadora)}</div>` : '';
-  return `<details class="carr-opts"><summary>${ic('truck', 13)} Comparación de transportadoras (${list.length})</summary>
-    <table class="qtable"><thead><tr><th>Transportadora</th><th >Flete</th><th >Ganancia esperada</th></tr></thead><tbody>
-    ${list.map((t) => `<tr class="${t.mejor ? 'best' : ''}"><td>${esc(t.transportadora)} ${t.mejor ? '<span class="tag brand">Elegida</span>' : ''}</td><td >${cop(t.flete)}</td><td >${cop(t.ganancia_esperada)}</td></tr>`).join('')}</tbody></table>
-    ${p.advertencia_transportadora ? `<div class="small" style="color:var(--warn)">${ic('alert', 13)} ${esc(p.advertencia_transportadora)}</div>` : ''}</details>`;
+// "Llega en ~3 días" (con aviso si el número es un estimado tuyo y no de Dropi).
+const daysText = (d) => (d === 1 ? '1 día' : `${d} días`);
+function deliveryTag(o) {
+  const p = profitOf(o);
+  if (!p.dias_entrega) return '';
+  const est = p.fuente_dias === 'estimado';
+  return `<span class="tag info" title="${est ? 'Tiempo típico que configuraste para esta transportadora (Envíos). Dropi no informó uno para esta ruta.' : 'Tiempo informado por Dropi para esta ruta.'}">Llega en ${est ? '~' : ''}${daysText(p.dias_entrega)}</span>`;
 }
 
+// Etiquetas de una opción del comparador.
+function optionTags(t, recommendedId) {
+  const tags = [];
+  if (t.id === recommendedId) tags.push('<span class="tag brand">Recomendada</span>');
+  if (t.mas_rapida) tags.push('<span class="tag ok">Más rápida</span>');
+  if (t.mas_barata) tags.push('<span class="tag ok">Más barata</span>');
+  if (t.dentro_del_limite === false) tags.push('<span class="tag bad">Fuera de tu plazo</span>');
+  if (t.viable === false) tags.push('<span class="tag bad">No conviene</span>');
+  return tags.join(' ');
+}
+
+const canPickCarrier = (o) => ['borrador', 'esperando_pago', 'por_aprobar', 'aprobado'].includes(o.status);
+
+function carrierOptions(o) {
+  const p = profitOf(o); const list = p.transportadoras || [];
+  const warn = p.advertencia_transportadora ? `<div class="small" style="color:var(--warn)">${ic('alert', 13)} ${esc(p.advertencia_transportadora)}</div>` : '';
+  if (!list.length) return warn;
+  const manual = p.transportadora_manual || '';
+  const pick = canPickCarrier(o) && list.length > 1 ? `<label class="field carrier-pick"><span>Transportadora de este pedido</span>
+      <select data-carrier-order="${o.id}">
+        <option value="" ${manual ? '' : 'selected'}>Automática${p.recomendada_id ? ' (la recomendada)' : ''}</option>
+        ${list.map((t) => `<option value="${esc(t.id)}" ${manual === t.id ? 'selected' : ''}>${esc(t.transportadora)} · ${t.fuente_dias === 'estimado' ? '~' : ''}${daysText(t.dias)} · flete ${cop(t.flete)}${t.dentro_del_limite === false ? ' · fuera de plazo' : ''}</option>`).join('')}
+      </select>
+      <small>${manual ? 'La elegiste tú: el Motor ya no la cambia sola.' : 'El Motor recomienda según tu criterio y plazo (Envíos). Puedes cambiarla.'}</small></label>` : '';
+  const limit = p.max_dias ? ` Tu plazo máximo es ${p.max_dias} días.` : '';
+  return `${pick}<details class="carr-opts"><summary>${ic('truck', 13)} Comparar transportadoras (${list.length})</summary>
+    <div class="table-wrap"><table class="qtable"><thead><tr><th>Transportadora</th><th>Llega en</th><th>Flete</th><th>Ganancia esperada</th></tr></thead><tbody>
+    ${list.map((t) => `<tr class="${t.id === (manual || p.recomendada_id) ? 'best' : ''}"><td>${esc(t.transportadora)} ${optionTags(t, p.recomendada_id)}</td><td>${t.fuente_dias === 'estimado' ? '~' : ''}${daysText(t.dias)}</td><td>${cop(t.flete)}</td><td>${cop(t.ganancia_esperada)}</td></tr>`).join('')}</tbody></table></div>
+    <div class="small muted" style="margin-top:6px">Los días marcados con ~ son tiempos típicos que tú configuras en Envíos (Dropi no los informó).${limit}</div>
+    ${warn}</details>`;
+}
+
+// La cuenta del pedido, en lenguaje de todos los días: qué entra, qué sale y
+// cuánto te queda (el flete de la transportadora ya está descontado).
 function moneyBox(o) {
   const p = profitOf(o); const r = p.rentabilidad || {};
+  const flete = p.flete || 0;
+  const costo = p.costo_producto != null ? p.costo_producto : Math.max(0, (o.total || 0) - (r.ganancia_si_entrega || 0) - flete);
+  const dev = Math.round((r.tasa_devolucion || 0) * 100);
   const warn = [];
-  if (p.costo_confirmado === false) warn.push('Costo del producto sin confirmar: cifras estimadas.');
+  if (p.costo_confirmado === false) warn.push('Costo del producto sin confirmar: las cifras son estimadas.');
+  if (p.fuente_flete === 'estimado') warn.push('El flete es un estimado (no es el precio real de la transportadora).');
   if (r.advertencia) warn.push(r.advertencia);
-  return `<div class="money">
-      <div><b>${cop(o.total)}</b><span>Total</span></div>
-      <div><b>${o.advance_amount ? cop(o.advance_amount) : '-'}</b><span>Anticipo</span></div>
-      <div><b>${cop(o.cod_amount)}</b><span>Cobra transportadora</span></div>
-      <div><b>${cop(r.ganancia_si_entrega)}</b><span>Ganancia si entrega</span></div>
-      <div><b>${cop(r.ganancia_esperada)}</b><span>Esperada (dev. ${pct(r.tasa_devolucion)})</span></div>
-      <div><b>${cop(p.cpa_objetivo)}</b><span>CPA máx. anuncios</span></div>
+  const row = (label, value, opts = {}) => `<div class="cuenta-row ${opts.cls || ''}"><div class="l">${label}${opts.hint ? `<small>${opts.hint}</small>` : ''}</div><div class="v">${value}</div></div>`;
+  const paga = o.advance_amount
+    ? row('Ya pagó por adelantado', cop(o.advance_amount), { hint: 'Anticipo que el cliente ya te transfirió.' }) + row('Paga al recibir', cop(o.cod_amount), { hint: 'La transportadora lo cobra en la puerta y luego te lo gira.' })
+    : row('Paga al recibir (contraentrega)', cop(o.cod_amount), { hint: 'La transportadora lo cobra en la puerta y luego te lo gira.' });
+  return `<div class="cuenta">
+      <div class="cuenta-title">Cuánto cobra el cliente</div>
+      ${row('Total del pedido', cop(o.total), { cls: 'strong' })}${paga}
+      <div class="cuenta-title">Cuánto te cuesta</div>
+      ${row('Costo del producto (lo que cobra Dropi)', '- ' + cop(costo))}
+      ${row('Envío por la transportadora' + (o.carrier ? ' (' + esc(o.carrier) + ')' : ''), '- ' + cop(flete), { hint: p.fuente_flete === 'dropi' ? 'Precio real cotizado por Dropi.' : 'Estimado: aún no es el precio real.' })}
+      <div class="cuenta-title">Cuánto te queda</div>
+      ${row('Ganancia si el cliente recibe', cop(r.ganancia_si_entrega), { cls: (r.ganancia_si_entrega || 0) >= 0 ? 'pos strong' : 'neg strong', hint: 'Total - producto - envío.' })}
+      ${row('Si el cliente lo rechaza o no lo recibe', '- ' + cop(Math.abs(r.perdida_si_devuelve || 0)), { cls: 'neg', hint: 'Pagas el envío de ida y vuelta' + (o.advance_amount ? ' (el anticipo ya cobrado te compensa)' : '') + '.' })}
+      ${row('Ganancia esperada', cop(r.ganancia_esperada), { cls: (r.ganancia_esperada || 0) >= 0 ? 'pos strong' : 'neg strong', hint: `Promedio contando que ~${dev} de cada 100 pedidos regresan.` })}
+      ${row('Máximo para gastar en anuncios por este pedido', cop(p.cpa_objetivo), { hint: 'Si pagas más que esto por conseguir un pedido como este, dejas de ganar. Ya incluye tu margen de seguridad.' })}
     </div>${carrierOptions(o)}${warn.map((x) => `<div class="small" style="color:var(--warn)">${ic('alert', 13)} ${esc(x)}</div>`).join('')}`;
 }
+
+// Elegir transportadora a mano (delegado: funciona en tarjetas y en ventanas).
+document.addEventListener('change', async (e) => {
+  const sel = e.target.closest && e.target.closest('select[data-carrier-order]');
+  if (!sel) return;
+  sel.disabled = true;
+  try {
+    await post(`/api/pedidos/${sel.dataset.carrierOrder}/transportadora`, { transportadora: sel.value });
+    toast(sel.value ? 'Transportadora cambiada. Ya se recalculó la ganancia.' : 'Vuelve la transportadora recomendada.');
+    closeModal(); scheduleRefresh();
+  } catch (err) { toast(err.message, true); sel.disabled = false; }
+});
 
 function orderCard(o, actions) {
   return `<div class="card ocard" data-order="${o.id}">
@@ -398,8 +457,8 @@ function orderCard(o, actions) {
 
 // ---------- APROBACIONES ----------
 async function renderAprobaciones() {
-  const [pending, waiting, approved] = await Promise.all([
-    api('/api/pedidos?estado=por_aprobar'), api('/api/pedidos?estado=esperando_pago'), api('/api/pedidos?estado=aprobado,en_dropi'),
+  const [pending, waiting, approved, cfg] = await Promise.all([
+    api('/api/pedidos?estado=por_aprobar'), api('/api/pedidos?estado=esperando_pago'), api('/api/pedidos?estado=aprobado,en_dropi'), api('/api/ajustes'),
   ]);
   const proofs = waiting.filter((o) => o.payment_status === 'comprobante_recibido');
   S.proofs = proofs.length;
@@ -418,8 +477,13 @@ async function renderAprobaciones() {
     return orderCard(o, `${info}<button class="btn ok" data-payok>${ic('dollar', 14)} Pago recibido</button>${proof ? '<button class="btn danger" data-paybad>No llegó el pago</button>' : ''}<button class="btn" data-edit>${ic('edit', 14)} Editar</button><button class="btn danger" data-reject>Cancelar pedido</button>`);
   }).join('') : '<div class="empty card">No hay pagos pendientes.</div>';
 
-  $('#dispatchCards').innerHTML = approved.length ? approved.map((o) => orderCard(o,
-    `<button class="btn primary" data-copy>${ic('copy', 14)} Copiar datos para Dropi</button><button class="btn ok" data-dispatch>${ic('truck', 14)} Registrar guía</button>${o.tracking_number ? `<span class="tag info">Guía ${esc(o.tracking_number)}</span>` : ''}`)).join('')
+  const dropiOn = !!(cfg.dropi && cfg.dropi.configurado && !cfg.dropi.sandbox && (cfg.negocio.dropi || {}).modo === 'api');
+  $('#dispatchCards').innerHTML = approved.length ? approved.map((o) => {
+    const inDropi = !!o.dropi_order_id;
+    const create = !inDropi && dropiOn ? `<button class="btn primary" data-dropi-create>${ic('truck', 14)} Crear en Dropi</button>` : '';
+    const copy = inDropi ? `<span class="tag ok">Orden en Dropi #${esc(o.dropi_order_id)}</span>` : `<button class="btn ${create ? '' : 'primary'}" data-copy>${ic('copy', 14)} Copiar datos para Dropi</button>`;
+    return orderCard(o, `${create}${copy}<button class="btn ok" data-dispatch>${ic('truck', 14)} Registrar guía</button>${o.tracking_number ? `<span class="tag info">Guía ${esc(o.tracking_number)}</span>` : (inDropi ? '<span class="tag warn">Falta la guía</span>' : '')}`);
+  }).join('')
     : '<div class="empty card">No hay pedidos aprobados pendientes de despacho.</div>';
 
   bindOrderButtons($('#view-aprobaciones'), [...pending, ...waiting, ...approved]);
@@ -436,7 +500,17 @@ function bindOrderButtons(root, orders) {
       try { await fn(); toast(okMsg); scheduleRefresh(); } catch (err) { toast(err.message, true); btn.disabled = false; }
     };
     const on = (sel, fn) => { const b = $(sel, card); if (b) b.onclick = () => fn(b); };
-    on('[data-approve]', (b) => act(b, () => post(`/api/pedidos/${o.id}/aprobar`), `Pedido #${o.id} aprobado. El cliente fue avisado.`));
+    on('[data-approve]', async (b) => {
+      b.disabled = true;
+      try {
+        const r = await post(`/api/pedidos/${o.id}/aprobar`); const d = r.dropi || {};
+        if (d.estado === 'creado') toast(`Pedido #${o.id} aprobado y creado en Dropi. ${d.mensaje}`);
+        else if (d.estado === 'error') toast(`Pedido #${o.id} aprobado, pero NO se creó en Dropi: ${d.mensaje}`, true);
+        else toast(`Pedido #${o.id} aprobado. El cliente fue avisado. Crea la orden en Dropi con "Copiar datos para Dropi".`);
+        scheduleRefresh();
+      } catch (err) { toast(err.message, true); b.disabled = false; }
+    });
+    on('[data-dropi-create]', (b) => act(b, async () => { const r = await post(`/api/pedidos/${o.id}/crear-en-dropi`); if (r.dropi) toast(r.dropi.mensaje); }, `Pedido #${o.id} creado en Dropi.`));
     on('[data-payok]', (b) => { if (confirm(`¿Confirmas que recibiste ${cop(o.advance_amount)} en tu cuenta?`)) act(b, () => post(`/api/pedidos/${o.id}/pago-confirmado`), 'Pago confirmado.'); });
     on('[data-paybad]', (b) => act(b, () => post(`/api/pedidos/${o.id}/pago-rechazado`), 'Comprobante marcado como no válido. Escríbele al cliente.'));
     on('[data-reject]', (b) => { const m = prompt('Motivo (no se envía al cliente):', ''); if (m !== null) act(b, () => post(`/api/pedidos/${o.id}/rechazar`, { motivo: m }), 'Pedido rechazado.'); });

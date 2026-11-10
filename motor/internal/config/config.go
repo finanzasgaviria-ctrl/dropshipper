@@ -98,6 +98,8 @@ type Negocio struct {
 	Conversacion Conversacion `yaml:"conversacion" json:"conversacion"`
 	Finanzas     FinanzasConf `yaml:"finanzas" json:"finanzas"`
 	Dropi        DropiConf    `yaml:"dropi" json:"dropi"`
+	// Envio: how the carrier is recommended (speed vs. profit).
+	Envio EnvioConf `yaml:"envio" json:"envio"`
 	// Transportadoras: the carriers the owner works with. Notes feed the AI
 	// system prompt; the return rate and priority drive the carrier choice.
 	Transportadoras []Transportadora `yaml:"transportadoras" json:"transportadoras"`
@@ -162,6 +164,22 @@ type FinanzasConf struct {
 	TasaConfirmacion float64 `yaml:"tasa_confirmacion" json:"tasa_confirmacion"`
 }
 
+// Carrier selection criteria.
+const (
+	CriterioRentable = "rentable" // best expected profit (default)
+	CriterioRapido   = "rapido"   // fastest delivery
+	CriterioBarato   = "barato"   // lowest freight
+)
+
+// EnvioConf tunes the carrier recommendation.
+type EnvioConf struct {
+	// MaxDias: carriers slower than this are never recommended (0 = no limit).
+	MaxDias int `yaml:"max_dias" json:"max_dias"`
+	// Criterio: rentable | rapido | barato, applied among the carriers that
+	// arrive within MaxDias.
+	Criterio string `yaml:"criterio" json:"criterio"`
+}
+
 // DropiConf: until API access is granted, orders are uploaded by hand.
 type DropiConf struct {
 	Modo string `yaml:"modo" json:"modo"` // "manual" | "api"
@@ -200,6 +218,52 @@ type Transportadora struct {
 	// Zonas the carrier is best for (department names), a hint for the AI and
 	// the fallback when Dropi cannot quote.
 	Zonas []string `yaml:"zonas" json:"zonas"`
+	// DiasEntrega: typical business days to a normal destination (main cities).
+	// DiasLejano: same for far / hard-to-reach destinations. Dropi's own quote
+	// wins when it includes a delivery time; these are the fallback. 0 = default.
+	DiasEntrega int `yaml:"dias_entrega" json:"dias_entrega"`
+	DiasLejano  int `yaml:"dias_lejano" json:"dias_lejano"`
+}
+
+// defaultDays are rough typical delivery times (business days) per carrier,
+// used until the owner edits them with what he actually observes.
+var defaultDays = map[string][2]int{
+	"coordinadora": {3, 5}, "interrapidisimo": {3, 5}, "envia": {3, 5}, "tcc": {3, 5},
+	"servientrega": {3, 5}, "veloces": {2, 4}, "domina": {2, 4}, "99minutos": {1, 2},
+	"wiilog": {3, 5}, "jamv-drive": {2, 4}, "derocha-express": {2, 4},
+}
+
+// DefaultDays returns the typical delivery days (normal, far) of a carrier id.
+func DefaultDays(id string) (normal, far int) {
+	if d, ok := defaultDays[id]; ok {
+		return d[0], d[1]
+	}
+	return 3, 5
+}
+
+// EstimatedDays is the carrier's typical delivery time for a destination risk
+// level ("normal", "lejano", "dificil_acceso", "zona_roja").
+func (t Transportadora) EstimatedDays(risk string) int {
+	d, far := t.DiasEntrega, t.DiasLejano
+	if d <= 0 || far <= 0 {
+		def, ok := defaultDays[t.ID]
+		if !ok {
+			def = [2]int{3, 5}
+		}
+		if d <= 0 {
+			d = def[0]
+		}
+		if far <= 0 {
+			far = def[1]
+		}
+	}
+	if far < d {
+		far = d
+	}
+	if risk == "" || risk == "normal" {
+		return d
+	}
+	return far
 }
 
 // DefaultTransportadoras are the ten carriers available through Dropi
@@ -336,6 +400,14 @@ func (n *Negocio) ApplyDefaults() {
 	if n.Dropi.Modo == "" {
 		n.Dropi.Modo = "manual"
 	}
+	switch n.Envio.Criterio {
+	case CriterioRentable, CriterioRapido, CriterioBarato:
+	default:
+		n.Envio.Criterio = CriterioRentable
+	}
+	if n.Envio.MaxDias < 0 {
+		n.Envio.MaxDias = 0
+	}
 	if len(n.Transportadoras) == 0 {
 		n.Transportadoras = DefaultTransportadoras()
 		for i := range n.Transportadoras {
@@ -349,6 +421,12 @@ func (n *Negocio) ApplyDefaults() {
 		t.Nombre = strings.TrimSpace(t.Nombre)
 		if t.ID == "" {
 			t.ID = CarrierID(t.Nombre)
+		}
+		if t.DiasEntrega < 0 {
+			t.DiasEntrega = 0
+		}
+		if t.DiasLejano < 0 {
+			t.DiasLejano = 0
 		}
 	}
 }

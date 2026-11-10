@@ -34,9 +34,9 @@ expuesto. Detalles en [`docs/CONFIGURACION.md`](docs/CONFIGURACION.md).
 |---|---|
 | 0. Cimientos | Hecha (Motor, IA generica, panel, base de datos) |
 | 1. MVP Vendedor | Hecha (vendedora IA, pedidos borrador, aprobaciones, reglas de zona); falta conectar tus cuentas reales |
-| 2. Cobro y postventa | Parcial (Bre-B/Wompi y comprobantes listos; seguimiento de guias y rescate de devoluciones por hacer) |
+| 2. Cobro y postventa | Parcial (Bre-B/Wompi y comprobantes listos; **Aprobar crea la orden en Dropi** y la IA recomienda transportadora con tiempo de entrega; falta recibir guias y estados de Dropi solos y rescatar devoluciones) |
 | 3. Finanzas | Parcial (rentabilidad por pedido y producto, fletes de Dropi; falta Meta Insights) |
-| 4. Cazador + Propuestas | Pendiente. Incluye integrar **Kalodata (MCP)** junto a DropKiller (ambos proveedores); hay 7 dias de prueba gratis |
+| 4. Cazador + Propuestas | Pendiente. Integrar **Kalodata** (API abierta, solo plan Enterprise; sin MCP oficial) junto a DropKiller. Ver `docs/PROPUESTA.md` |
 | 5. Landings, 6. Media Buyer, 7. Movil | Pendientes |
 
 ## Todo se configura desde el panel

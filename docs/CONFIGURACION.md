@@ -269,9 +269,10 @@ reinicia el Motor. Para comprobar que haria el Motor con un destino, usa **Produ
 
 ## 9. Lo que falta conectar (siguientes fases)
 
-- **Dropi por API**: solicita a Dropi el **token de integraciones** y la documentacion. Con eso, **Aprobar** creara la
-  orden sola y las guias se actualizaran automaticamente.
+- **Guias y estados de Dropi solos**: hoy **Aprobar** ya crea la orden en Dropi, pero la guia y los cambios de estado
+  (en transito, entregado, novedad, devuelto) todavia se registran a mano. Falta leerlos de Dropi (webhook o consulta).
 - **DropKiller (MCP)**: requiere el plan **Advanced**.
+- **Kalodata**: tiene API abierta (solo plan Enterprise, unos US$570/mes); no hay MCP oficial. Ver `docs/PROPUESTA.md`.
 - **Meta Ads, landings y Cazador de productos**: fases 3 a 6 de la propuesta.
 
 ## Dropi y transportadoras
@@ -290,6 +291,35 @@ Todo esto se hace desde el panel; no hay que usar la terminal.
    copiar y tu registras la guia a mano.
 
 Para desconectar, pulsa **Desconectar** en la misma tarjeta. Los fletes vuelven a ser los estimados.
+
+### Aprobar crea la orden en Dropi
+
+Con Dropi conectado (entorno real, no el de pruebas) y **Crear los pedidos aprobados directamente en Dropi** encendido:
+
+1. Pulsas **Aprobar**: el cliente recibe su confirmacion y el Motor crea la orden en Dropi con la transportadora elegida.
+2. Si Dropi ya devuelve la guia, se registra sola y el cliente la recibe por WhatsApp. Si no, el pedido queda en
+   **Falta la guia**: cuando salga, usa **Registrar guia**.
+3. Si Dropi falla, **el pedido sigue aprobado** (el cliente ya fue avisado), aparece una alerta y un boton **Crear en Dropi**
+   para reintentar. Un pedido **nunca se crea dos veces** en Dropi. Si Dropi tarda en responder, el mensaje te pide revisar
+   en Dropi antes de reintentar, porque pudo haberlo creado.
+4. Antes de llamar a Dropi se revisa que el producto tenga **ID de Dropi** y que el pedido tenga todos los datos; si falta algo, te dice que.
+
+> Los nombres de los campos de la orden siguen la documentacion de Dropi pero **no estan verificados contra una cuenta real**.
+> Haz el primer pedido real con un producto barato y revisa en Dropi que llegue bien (nombre, direccion, recaudo, transportadora).
+
+### Que transportadora se recomienda (y en cuantos dias llega)
+
+En **Envios > Como se recomienda la transportadora** defines:
+
+- **Plazo maximo de entrega** (dias). Nunca se recomienda una transportadora mas lenta que tu plazo si otra si llega a tiempo.
+  Si ninguna llega, se recomienda la mas rapida y se te avisa.
+- **Criterio** entre las que llegan a tiempo: *mas rentable*, *mas rapida* o *mas barata*. Con rapida o barata, nunca se
+  recomienda una que te haga perder dinero habiendo otra que no.
+
+Los **dias de entrega** vienen de Dropi cuando la cotizacion los incluye. Si no, se usan los **tiempos tipicos** que tu escribes
+por transportadora (ciudades y zonas lejanas) y se muestran con **~** (por ejemplo "~3 dias"). Los valores por defecto son
+aproximados: ajustalos con lo que veas en tus envios. En cada pedido puedes **elegir otra transportadora** (se recalcula la
+ganancia) y tu eleccion se conserva si luego editas el pedido.
 
 ### Costos de los productos y "Costo sin confirmar"
 

@@ -133,6 +133,8 @@ type QuoteInput struct {
 type Quote struct {
 	Carrier string `json:"transportadora"`
 	Freight int64  `json:"flete"`
+	// Days is the delivery time in days when Dropi reports one (0 = unknown).
+	Days int `json:"dias,omitempty"`
 }
 
 // Quote asks Dropi for the freight of every carrier it can use for the route.
@@ -188,10 +190,96 @@ func (c *Client) Product(ctx context.Context, id string) (Product, error) {
 	return p, nil
 }
 
+// OrderResult is what the Motor keeps from Dropi's answer to a created order.
+type OrderResult struct {
+	ID       string `json:"id"`
+	Tracking string `json:"guia"`
+	Carrier  string `json:"transportadora"`
+	Raw      string `json:"-"`
+}
+
 // CreateOrder posts an order payload. Only used when the owner switches Dropi
-// to "api" mode; simulations never call it.
-func (c *Client) CreateOrder(ctx context.Context, payload map[string]any) ([]byte, error) {
-	return c.do(ctx, http.MethodPost, "/orders/myorders", payload)
+// to "api" mode; simulations never call it. The answer is parsed tolerantly:
+// the order id is mandatory (without it the order cannot be tracked), the
+// tracking number and carrier are kept when Dropi already assigned them.
+func (c *Client) CreateOrder(ctx context.Context, payload map[string]any) (OrderResult, error) {
+	raw, err := c.do(ctx, http.MethodPost, "/orders/myorders", payload)
+	if err != nil {
+		return OrderResult{}, err
+	}
+	return parseOrderResult(raw)
+}
+
+func parseOrderResult(raw []byte) (OrderResult, error) {
+	var v any
+	if err := json.Unmarshal(raw, &v); err != nil {
+		return OrderResult{}, fmt.Errorf("respuesta de Dropi inválida: %w", err)
+	}
+	res := OrderResult{Raw: snippet(raw)}
+	// The answer may be {"objects":{...}}, {"data":{...}} or the order itself.
+	for _, m := range candidateObjects(v) {
+		if res.ID == "" {
+			res.ID = idStr(m, "id", "order_id", "orderId", "orden_id")
+		}
+		if res.Tracking == "" {
+			res.Tracking = str(m, "shipping_guide", "guia", "tracking_number", "trackingNumber", "guide", "numero_guia")
+		}
+		if res.Carrier == "" {
+			res.Carrier = str(m, "distribution_company", "distributionCompany", "transportadora", "carrier")
+		}
+	}
+	if res.ID == "" {
+		return res, fmt.Errorf("Dropi respondió sin número de orden; revisa el pedido en Dropi antes de reintentar (para no duplicarlo): %s", res.Raw)
+	}
+	return res, nil
+}
+
+// candidateObjects lists the objects an answer may hold the order in, outermost
+// last so the most specific wins.
+func candidateObjects(v any) []map[string]any {
+	var out []map[string]any
+	var walk func(x any, depth int)
+	walk = func(x any, depth int) {
+		if depth > 3 {
+			return
+		}
+		switch t := x.(type) {
+		case map[string]any:
+			out = append(out, t)
+			for _, k := range []string{"objects", "data", "result", "order"} {
+				if y, ok := t[k]; ok {
+					walk(y, depth+1)
+				}
+			}
+		case []any:
+			if len(t) > 0 {
+				walk(t[0], depth+1)
+			}
+		}
+	}
+	walk(v, 0)
+	// Inner objects first.
+	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
+		out[i], out[j] = out[j], out[i]
+	}
+	return out
+}
+
+// idStr reads an id that may come as a number or a string.
+func idStr(m map[string]any, keys ...string) string {
+	for _, k := range keys {
+		switch t := m[k].(type) {
+		case float64:
+			if t > 0 {
+				return fmt.Sprintf("%.0f", t)
+			}
+		case string:
+			if s := strings.TrimSpace(t); s != "" {
+				return s
+			}
+		}
+	}
+	return ""
 }
 
 // ---------- tolerant parsing ----------
@@ -302,7 +390,11 @@ func parseQuotes(raw []byte) []Quote {
 		if name == "" || price <= 0 {
 			continue
 		}
-		out = append(out, Quote{Carrier: name, Freight: price})
+		days := int(num(m, "delivery_days", "deliveryDays", "dias_entrega", "tiempo_entrega", "days", "estimated_days", "estimatedDays", "delivery_time", "deliveryTime", "tiempo_estimado"))
+		if days < 0 || days > 60 {
+			days = 0
+		}
+		out = append(out, Quote{Carrier: name, Freight: price, Days: days})
 	}
 	return out
 }
