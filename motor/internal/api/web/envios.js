@@ -15,9 +15,33 @@ async function renderEnvios() {
     ${d.configurado
       ? (d.sandbox ? notice('warn', 'Dropi está en <b>entorno de pruebas</b>: allí no hay transportadoras, así que los fletes serán estimados. Para fletes reales, desmarca el entorno de pruebas en <a href="#conexiones">Conexiones</a>.') : notice('ok', 'Dropi conectado: los fletes se cotizan en vivo.'))
       : notice('info', 'Dropi no está conectado: se usa el flete estimado de cada producto. Conéctalo en <a href="#conexiones">Conexiones</a> para cotizar el flete real.')}
-    <div id="evCarriers"></div>
+    <div id="evRules"></div>
+    <div id="evCarriers" style="margin-top:16px"></div>
     <div id="evQuote" style="margin-top:16px"></div>`;
-  drawCarriers(); drawQuote();
+  drawRules(); drawCarriers(); drawQuote();
+}
+
+// =============== Cómo se recomienda la transportadora ===============
+function drawRules() {
+  const e = (EV.cfg.negocio.envio || {}); const crit = e.criterio || 'rentable';
+  const opt = (v, t) => `<option value="${v}" ${crit === v ? 'selected' : ''}>${t}</option>`;
+  $('#evRules').innerHTML = `<div class="card">
+    <div class="card-head"><span class="ico">${ic('clock', 18)}</span><div><h3>Cómo se recomienda la transportadora</h3>
+      <div class="desc">El Motor nunca recomienda una transportadora más lenta que tu plazo si otra sí llega a tiempo. Entre las que llegan a tiempo, elige según tu criterio.</div></div></div>
+    <div class="fgrid">
+      <label class="field"><span>Plazo máximo de entrega (días)</span><input id="evMax" type="number" min="0" max="60" step="1" value="${e.max_dias || 0}"><small>0 = sin límite. Si ninguna llega a tiempo, se recomienda la más rápida y se te avisa.</small></label>
+      <label class="field"><span>Entre las que llegan a tiempo, elegir la</span><select id="evCrit">${opt('rentable', 'Más rentable (la que más ganancia deja)')}${opt('rapido', 'Más rápida')}${opt('barato', 'Más barata (menor flete)')}</select>
+        <small>Si eliges rápida o barata, nunca se recomienda una que te haga perder dinero habiendo otra que no.</small></label>
+    </div>
+    <div class="form-actions"><span class="spacer"></span><button class="btn primary" id="evRulesSave">Guardar</button></div></div>`;
+  $('#evRulesSave').onclick = (ev) => busy(ev.currentTarget, async () => {
+    try {
+      const max = Math.min(60, Math.max(0, parseInt($('#evMax').value, 10) || 0));
+      await put('/api/ajustes/negocio', { envio: { max_dias: max, criterio: $('#evCrit').value } });
+      EV.cfg.negocio.envio = { max_dias: max, criterio: $('#evCrit').value };
+      toast('Listo. Los próximos pedidos y cotizaciones usan este criterio.');
+    } catch (err) { toast(err.message, true); }
+  });
 }
 
 // =============== Transportadoras ===============
@@ -28,6 +52,8 @@ function drawCarriers() {
         <span class="small muted">${(c.zonas || []).length ? 'Fuerte en: ' + esc(c.zonas.join(', ')) : ''}</span></div>
       <div class="carrier-fields">
         <label class="field"><span>Prioridad</span><input data-k="prioridad" type="number" min="1" step="1" value="${c.prioridad || 99}"><small>Menor gana si empatan.</small></label>
+        <label class="field"><span>Días de entrega (ciudades)</span><input data-k="dias" type="number" min="0" max="60" step="1" value="${c.dias_entrega || ''}" placeholder="${((EV.cfg.dias_tipicos || {})[c.id] || [])[0] || ''}"><small>Lo que suele tardar a ciudades principales. Vacío = valor típico.</small></label>
+        <label class="field"><span>Días de entrega (zonas lejanas)</span><input data-k="diasl" type="number" min="0" max="60" step="1" value="${c.dias_lejano || ''}" placeholder="${((EV.cfg.dias_tipicos || {})[c.id] || [])[1] || ''}"><small>Municipios apartados o de difícil acceso.</small></label>
         <label class="field"><span>Devoluciones</span><div class="suffix"><input data-k="tasa" type="number" min="0" max="100" step="0.5" value="${Math.round((c.tasa_devolucion || 0) * 1000) / 10}"><em>%</em></div><small>0 = usar el general.</small></label>
         <label class="field"><span>Qué debe saber la IA de esta transportadora</span><textarea data-k="notas" rows="2">${esc(c.notas)}</textarea></label>
       </div></div>`).join('');
@@ -42,6 +68,8 @@ function drawCarriers() {
       const k = e.target.dataset.k;
       if (k === 'activa') { c.activa = e.target.checked; el.classList.toggle('off', !c.activa); }
       if (k === 'prioridad') c.prioridad = Math.max(1, parseInt(e.target.value, 10) || 99);
+      if (k === 'dias') c.dias_entrega = Math.min(60, Math.max(0, parseInt(e.target.value, 10) || 0));
+      if (k === 'diasl') c.dias_lejano = Math.min(60, Math.max(0, parseInt(e.target.value, 10) || 0));
       if (k === 'tasa') c.tasa_devolucion = Math.min(100, Math.max(0, Number(e.target.value) || 0)) / 100;
       if (k === 'notas') c.notas = e.target.value;
     });
@@ -93,11 +121,22 @@ function drawQuote() {
 function quoteTable(cmp) {
   const opts = cmp.opciones || [];
   if (!opts.length) return notice('bad', esc(cmp.advertencia || 'No hay transportadoras activas para cotizar.'));
-  return `<div class="row gap wrap" style="margin-top:12px">${srcTag(cmp.fuente_flete)}${cmp.advertencia ? `<span class="small" style="color:var(--warn)">${ic('alert', 13)} ${esc(cmp.advertencia)}</span>` : ''}</div>
-    <div class="table-wrap" style="margin-top:6px"><table class="qtable"><thead><tr><th>Transportadora</th><th>Flete</th><th>Ganancia si entrega</th><th>Pérdida si devuelve</th><th>Esperada</th><th>Devol.</th></tr></thead><tbody>
-    ${opts.map((o) => `<tr class="${o.mejor ? 'best' : ''}"><td>${esc(o.transportadora)} ${o.mejor ? '<span class="tag ok">Mejor</span>' : ''}${o.viable ? '' : ' <span class="tag bad">No conviene</span>'}</td>
-      <td>${cop(o.flete)}</td><td class="${o.ganancia_si_entrega >= 0 ? 'pos' : 'neg'}">${cop(o.ganancia_si_entrega)}</td><td class="neg">${cop(Math.abs(o.perdida_si_devuelve))}</td>
-      <td class="${o.ganancia_esperada >= 0 ? 'pos' : 'neg'}">${cop(o.ganancia_esperada)}</td><td>${pct(o.tasa_devolucion)}</td></tr>`).join('')}</tbody></table></div>`;
+  const crit = { rentable: 'la más rentable', rapido: 'la más rápida', barato: 'la más barata' }[cmp.criterio] || 'la más rentable';
+  const plazo = cmp.max_dias ? `plazo máximo ${cmp.max_dias} días` : 'sin plazo máximo';
+  const days = (o) => `${o.fuente_dias === 'estimado' ? '~' : ''}${o.dias === 1 ? '1 día' : o.dias + ' días'}`;
+  const tags = (o) => [
+    o.mejor ? '<span class="tag brand">Recomendada</span>' : '',
+    o.mas_rapida ? '<span class="tag ok">Más rápida</span>' : '',
+    o.mas_barata ? '<span class="tag ok">Más barata</span>' : '',
+    o.dentro_del_limite === false ? '<span class="tag bad">Fuera de tu plazo</span>' : '',
+    o.viable ? '' : '<span class="tag bad">No conviene</span>',
+  ].filter(Boolean).join(' ');
+  return `<div class="row gap wrap" style="margin-top:12px">${srcTag(cmp.fuente_flete)}<span class="small muted">Recomendación: ${crit} · ${plazo}</span>${cmp.advertencia ? `<span class="small" style="color:var(--warn)">${ic('alert', 13)} ${esc(cmp.advertencia)}</span>` : ''}</div>
+    <div class="table-wrap" style="margin-top:6px"><table class="qtable"><thead><tr><th>Transportadora</th><th>Llega en</th><th>Envío (flete)</th><th>Ganancia si el cliente recibe</th><th>Pierdes si lo devuelve</th><th>Ganancia esperada</th><th>Devoluciones</th></tr></thead><tbody>
+    ${opts.map((o) => `<tr class="${o.mejor ? 'best' : ''}"><td>${esc(o.transportadora)} ${tags(o)}</td>
+      <td>${days(o)}</td><td>${cop(o.flete)}</td><td class="${o.ganancia_si_entrega >= 0 ? 'pos' : 'neg'}">${cop(o.ganancia_si_entrega)}</td><td class="neg">${cop(Math.abs(o.perdida_si_devuelve))}</td>
+      <td class="${o.ganancia_esperada >= 0 ? 'pos' : 'neg'}">${cop(o.ganancia_esperada)}</td><td>${pct(o.tasa_devolucion)}</td></tr>`).join('')}</tbody></table></div>
+    <div class="small muted" style="margin-top:6px">Los días con ~ son los tiempos típicos que tú configuraste arriba; Dropi no informó el tiempo para esa transportadora.</div>`;
 }
 
 function drawQuoteResult(q) {

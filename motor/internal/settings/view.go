@@ -1,6 +1,10 @@
 package settings
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/michiTrader/dropshipper/motor/internal/config"
+)
 
 // Mask hides a secret, keeping the last 4 characters of long ones.
 func Mask(s string) string {
@@ -111,6 +115,9 @@ type View struct {
 	Ngrok    NgrokView    `json:"ngrok"`
 	General  GeneralView  `json:"general"`
 	Negocio  any          `json:"negocio"`
+	// DiasTipicos: typical delivery days per carrier id ([normal, lejano]),
+	// shown as the placeholder of the days fields.
+	DiasTipicos map[string][2]int `json:"dias_tipicos"`
 }
 
 // Public builds the masked view. webhookBase is the URL to show for hooks
@@ -130,7 +137,11 @@ func (s Settings) PublicWith(tunnelURL, webhookBase string) View {
 		source = "local"
 		base = strings.TrimRight(webhookBase, "/")
 	}
-	v := View{Negocio: s.Negocio}
+	v := View{Negocio: s.Negocio, DiasTipicos: map[string][2]int{}}
+	for _, t := range s.Negocio.Transportadoras {
+		a, b := config.DefaultDays(t.ID)
+		v.DiasTipicos[t.ID] = [2]int{a, b}
+	}
 	v.IA.ActiveID = s.IA.ActiveID
 	v.IA.Presets = Presets
 	v.IA.Providers = []ProviderView{}

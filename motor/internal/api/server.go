@@ -397,10 +397,6 @@ func (s *Server) orderAction(w http.ResponseWriter, r *http.Request, fn func(ctx
 	writeJSON(w, 200, o)
 }
 
-func (s *Server) approve(w http.ResponseWriter, r *http.Request) {
-	s.orderAction(w, r, func(ctx context.Context, id int64) (store.Order, error) { return s.Sales.Approve(ctx, id, "dueno") })
-}
-
 func (s *Server) reject(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		Motivo string `json:"motivo"`

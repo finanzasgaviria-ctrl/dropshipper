@@ -281,6 +281,26 @@ type Profit struct {
 	// Carriers compared for this destination, best first.
 	Carriers       []shipping.Option `json:"transportadoras,omitempty"`
 	CarrierWarning string            `json:"advertencia_transportadora,omitempty"`
+	// Breakdown of the money, so the panel can explain it in plain words.
+	ProductCost int64 `json:"costo_producto"` // supplier cost x units
+	// Delivery time of the chosen carrier and how the choice was made.
+	Days          int    `json:"dias_entrega"`
+	DaysSource    string `json:"fuente_dias,omitempty"`
+	Criterion     string `json:"criterio,omitempty"`
+	MaxDays       int    `json:"max_dias,omitempty"`
+	NoneInTime    bool   `json:"ninguna_a_tiempo,omitempty"`
+	RecommendedID string `json:"recomendada_id,omitempty"`
+	// ManualCarrierID is set when the owner overrode the recommendation.
+	ManualCarrierID string `json:"transportadora_manual,omitempty"`
+}
+
+// previousProfit reads the economics saved with the order (zero if none).
+func previousProfit(o store.Order) Profit {
+	var p Profit
+	if o.ProfitJSON != "" {
+		_ = json.Unmarshal([]byte(o.ProfitJSON), &p)
+	}
+	return p
 }
 
 func (s *Service) applyZone(ctx context.Context, o *store.Order, d rules.Decision, p catalog.Product) {
@@ -293,17 +313,30 @@ func (s *Service) applyZone(ctx context.Context, o *store.Order, d rules.Decisio
 		o.Carrier = d.Carriers[0]
 	}
 	n := s.neg()
+	prev := previousProfit(*o)
 	freight, source := p.Freight, shipping.SourceEstimate
 	var options []shipping.Option
 	var warn string
+	var chosen *shipping.Option
+	var cmp shipping.Comparison
 	if s.Shipping != nil {
-		cmp := s.Shipping.Compare(ctx, shipping.Scenario{
+		cmp = s.Shipping.Compare(ctx, shipping.Scenario{
 			Department: o.Department, City: o.City, Price: o.Total, UnitCost: p.UnitCost, Units: o.Units,
 			EstimatedFreight: p.Freight, Risk: d.Risk, Policy: d.Policy, AdvancePaid: d.AdvanceAmount, ZoneCarriers: d.Carriers,
 		})
 		options, warn = cmp.Options, cmp.Warning
-		if cmp.Best != nil {
-			o.Carrier, freight, source = cmp.Best.Carrier, cmp.Best.Freight, cmp.Source
+		chosen = cmp.Best
+		// The owner's manual choice wins while that carrier still serves the route.
+		if prev.ManualCarrierID != "" {
+			for i := range options {
+				if options[i].ID == prev.ManualCarrierID {
+					chosen = &options[i]
+					break
+				}
+			}
+		}
+		if chosen != nil {
+			o.Carrier, freight, source = chosen.Carrier, chosen.Freight, cmp.Source
 		}
 	}
 	ret := rules.ReturnRateFor(n.Finanzas.TasaDevolucion, d.Risk, d.Policy)
@@ -315,12 +348,87 @@ func (s *Service) applyZone(ctx context.Context, o *store.Order, d rules.Decisio
 		ReturnRate: ret, AdvancePaid: d.AdvanceAmount,
 	})
 	perOrder, _ := rules.MaxCPA(pr.BreakEvenCPA, n.Finanzas.MargenSeguridad, n.Finanzas.TasaConfirmacion)
-	raw, _ := json.Marshal(Profit{
+	out := Profit{
 		Result: pr, TargetCPA: perOrder, CostConfirmed: p.CostConfirmed,
 		ExpectedUSD: rules.COPtoUSD(pr.ExpectedProfit, n.Finanzas.TRM), ReturnRateUsed: ret,
 		Freight: freight, FreightSource: source, Carriers: options, CarrierWarning: warn,
-	})
+		ProductCost: p.UnitCost * int64(maxInt(o.Units, 1)),
+		Criterion:   cmp.Criterion, MaxDays: cmp.MaxDays, NoneInTime: cmp.NoneInTime,
+	}
+	if cmp.Best != nil {
+		out.RecommendedID = cmp.Best.ID
+	}
+	if chosen != nil {
+		out.Days, out.DaysSource = chosen.Days, chosen.DaysSource
+		if prev.ManualCarrierID != "" && chosen.ID == prev.ManualCarrierID {
+			out.ManualCarrierID = chosen.ID
+		}
+	}
+	raw, _ := json.Marshal(out)
 	o.ProfitJSON = string(raw)
+}
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+// SetCarrier is the owner's choice of carrier for an order that is not yet
+// shipped. An empty id goes back to the automatic recommendation. The money
+// is recomputed with that carrier's freight.
+func (s *Service) SetCarrier(ctx context.Context, orderID int64, carrierID, by string) (store.Order, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	o, err := s.Store.GetOrder(ctx, orderID)
+	if err != nil {
+		return o, err
+	}
+	if !o.Open() && o.Status != store.OrderApproved {
+		return o, fmt.Errorf("el pedido #%d ya salió (estado %s): la transportadora ya no se puede cambiar", o.ID, o.Status)
+	}
+	if o.Department == "" || o.City == "" || o.Total <= 0 {
+		return o, errors.New("faltan el destino y el valor del pedido para calcular con otra transportadora")
+	}
+	carrierID = strings.TrimSpace(carrierID)
+	product, _ := s.Catalog.Get(o.ProductSKU)
+	d := s.Zones.Decide(rules.Destination{Department: o.Department, City: o.City, Neighborhood: o.Neighborhood}, o.Total)
+	// Keep a manual risk adjustment (the owner may have changed the payment rule).
+	if o.Risk != "" && o.Risk != d.Risk && rules.ValidRisk(o.Risk) {
+		pol := s.Zones.PolicyFor(o.Risk)
+		d.Risk, d.Policy = o.Risk, pol.Pago
+		d.AdvanceAmount, d.CODAmount = rules.Advance(pol, o.Total)
+		d.Reason = o.ZoneReason
+	}
+	prev := previousProfit(o)
+	if carrierID == "" {
+		prev.ManualCarrierID = ""
+	} else {
+		t, ok := s.neg().Carrier(carrierID)
+		if !ok {
+			return o, fmt.Errorf("la transportadora %q no existe", carrierID)
+		}
+		if !t.Activa {
+			return o, fmt.Errorf("%s está apagada en Envíos; enciéndela primero", t.Nombre)
+		}
+		prev.ManualCarrierID = t.ID
+	}
+	raw, _ := json.Marshal(prev)
+	o.ProfitJSON = string(raw)
+	s.applyZone(ctx, &o, d, product)
+	if carrierID != "" && previousProfit(o).ManualCarrierID == "" {
+		return o, errors.New("esa transportadora no cubre el destino del pedido (Dropi no la cotizó para esa ruta)")
+	}
+	o, err = s.Store.SaveOrder(ctx, o)
+	if err == nil {
+		what := "automática"
+		if carrierID != "" {
+			what = o.Carrier
+		}
+		s.Store.Audit(ctx, o.Phone, by, "transportadora_elegida", fmt.Sprintf("pedido %d: %s", o.ID, what))
+	}
+	return o, err
 }
 
 var emailRe = regexp.MustCompile(`^[A-Za-z0-9._%+\-]+@[A-Za-z0-9\-]+(\.[A-Za-z0-9\-]+)*\.[A-Za-z]{2,}$`)

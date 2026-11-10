@@ -254,6 +254,14 @@ func (s *Settings) Validate() error {
 			return fmt.Errorf("la tasa de devolución de %s debe estar entre 0%% y 99%%", t.Nombre)
 		}
 	}
+	if n.Envio.MaxDias > 60 {
+		return errors.New("el máximo de días de entrega no puede pasar de 60 (usa 0 para no limitar)")
+	}
+	for _, t := range n.Transportadoras {
+		if t.DiasEntrega > 60 || t.DiasLejano > 60 {
+			return fmt.Errorf("los días de entrega de %s no pueden pasar de 60", t.Nombre)
+		}
+	}
 	f := n.Finanzas
 	if f.TasaDevolucion < 0 || f.TasaDevolucion >= 1 {
 		return errors.New("la tasa de devolución debe estar entre 0% y 99%")

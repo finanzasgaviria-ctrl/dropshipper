@@ -93,3 +93,56 @@ func TestProduct(t *testing.T) {
 		t.Fatal("producto inexistente debe fallar")
 	}
 }
+
+func TestQuoteParsesDeliveryDays(t *testing.T) {
+	qs := parseQuotes([]byte(`{"isSuccess":true,"objects":[
+		{"distribution_company":{"name":"COORDINADORA"},"shipping_amount":14500,"delivery_days":2},
+		{"distribution_company":{"name":"ENVIA"},"shipping_amount":12900,"tiempo_entrega":"4"},
+		{"distribution_company":{"name":"TCC"},"shipping_amount":13000},
+		{"distribution_company":{"name":"RARA"},"shipping_amount":13000,"days":900}]}`))
+	got := map[string]int{}
+	for _, q := range qs {
+		got[q.Carrier] = q.Days
+	}
+	if got["COORDINADORA"] != 2 || got["ENVIA"] != 4 || got["TCC"] != 0 || got["RARA"] != 0 {
+		t.Fatalf("días: %+v (0 = Dropi no informó; un número absurdo se descarta)", got)
+	}
+}
+
+func TestParseOrderResultShapes(t *testing.T) {
+	for name, body := range map[string]string{
+		"objects": `{"isSuccess":true,"objects":{"id":9912,"shipping_guide":"GUIA77","distribution_company":{"name":"ENVIA"}}}`,
+		"data":    `{"isSuccess":true,"data":{"order_id":"9912","guia":"GUIA77","transportadora":"ENVIA"}}`,
+		"lista":   `{"isSuccess":true,"objects":[{"id":9912,"tracking_number":"GUIA77","distributionCompany":"ENVIA"}]}`,
+		"directo": `{"id":9912,"shipping_guide":"GUIA77","distribution_company":{"name":"ENVIA"}}`,
+	} {
+		res, err := parseOrderResult([]byte(body))
+		if err != nil || res.ID != "9912" || res.Tracking != "GUIA77" || res.Carrier != "ENVIA" {
+			t.Fatalf("%s: %+v err=%v", name, res, err)
+		}
+	}
+	// No guide yet is normal: the order id is what matters.
+	res, err := parseOrderResult([]byte(`{"isSuccess":true,"objects":{"id":55}}`))
+	if err != nil || res.ID != "55" || res.Tracking != "" {
+		t.Fatalf("sin guía: %+v err=%v", res, err)
+	}
+}
+
+func TestParseOrderResultWithoutIDIsAnError(t *testing.T) {
+	_, err := parseOrderResult([]byte(`{"isSuccess":true,"objects":{}}`))
+	if err == nil || !contains(err.Error(), "duplicarlo") {
+		t.Fatalf("sin número de orden hay que avisar para no duplicar: %v", err)
+	}
+	if _, err := parseOrderResult([]byte(`<html>`)); err == nil {
+		t.Fatal("una respuesta que no es JSON es un error")
+	}
+}
+
+func contains(s, sub string) bool {
+	for i := 0; i+len(sub) <= len(s); i++ {
+		if s[i:i+len(sub)] == sub {
+			return true
+		}
+	}
+	return false
+}

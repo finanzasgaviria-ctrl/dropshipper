@@ -24,6 +24,7 @@ func (s *Server) dropiRoutes(api *http.ServeMux) {
 	api.HandleFunc("POST /api/envios/cotizar", s.quoteShipping)
 	api.HandleFunc("POST /api/dropi/simular", s.simulateDropi)
 	api.HandleFunc("POST /api/productos/{sku}/costos-dropi", s.pullDropiCosts)
+	s.dropiOrderRoutes(api)
 }
 
 type dropiIn struct {

@@ -284,3 +284,14 @@ details.carr-opts .qtable { margin-top: 6px; }
 .qrbox img { background: #fff; padding: 8px; border-radius: 8px; border: 1px solid var(--line2); image-rendering: pixelated; }
 .qrbox .qrsteps { margin: 0 0 6px; padding-left: 18px; font-size: 13px; line-height: 1.7; }
 .qrbox > div, .qrbox > ol { flex: 1 1 220px; }
+
+/* cuenta del pedido (reemplaza las cajitas con titulos tecnicos) */
+.cuenta { border: 1px solid var(--line); border-radius: 10px; margin: 12px 0; overflow: hidden; background: var(--panel); }
+.cuenta-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); background: var(--panel2); padding: 6px 12px; }
+.cuenta-row { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; padding: 7px 12px; border-top: 1px solid var(--line); font-size: 13px; }
+.cuenta-title + .cuenta-row { border-top: 0; }
+.cuenta-row .l small { display: block; color: var(--muted); font-size: 11px; margin-top: 1px; font-weight: 400; }
+.cuenta-row .v { font-variant-numeric: tabular-nums; white-space: nowrap; font-weight: 600; }
+.cuenta-row.strong .l, .cuenta-row.strong .v { font-weight: 700; }
+.cuenta-row.pos .v { color: var(--ok); } .cuenta-row.neg .v { color: var(--bad); }
+.carrier-pick { margin: 8px 0; } .carrier-pick select { width: 100%; }

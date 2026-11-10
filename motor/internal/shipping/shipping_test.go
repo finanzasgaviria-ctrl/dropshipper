@@ -145,3 +145,105 @@ func TestPromptSection(t *testing.T) {
 		}
 	}
 }
+
+// ---------- tiempos de entrega y criterio ----------
+
+func withEnvio(max int, crit string) func(*config.Negocio) {
+	return func(n *config.Negocio) { n.Envio.MaxDias, n.Envio.Criterio = max, crit }
+}
+
+func TestDaysComeFromDropiWhenReported(t *testing.T) {
+	q := &fakeQ{quotes: []dropi.Quote{{Carrier: "COORDINADORA", Freight: 16000, Days: 2}, {Carrier: "ENVIA", Freight: 12000}}}
+	c := svc(q, nil).Compare(context.Background(), scn)
+	got := map[string]Option{}
+	for _, o := range c.Options {
+		got[o.ID] = o
+	}
+	if got["coordinadora"].Days != 2 || got["coordinadora"].DaysSource != SourceDropi {
+		t.Fatalf("Dropi informó 2 días: %+v", got["coordinadora"])
+	}
+	if got["envia"].Days != 3 || got["envia"].DaysSource != SourceEstimate {
+		t.Fatalf("sin dato de Dropi se usa el típico configurado (3): %+v", got["envia"])
+	}
+}
+
+func TestSlowCarrierIsNeverRecommendedWhenAFasterOneArrivesInTime(t *testing.T) {
+	// Envía is the most profitable but takes 6 days; the limit is 4.
+	q := &fakeQ{quotes: []dropi.Quote{{Carrier: "ENVIA", Freight: 9000, Days: 6}, {Carrier: "COORDINADORA", Freight: 15000, Days: 3}}}
+	c := svc(q, withEnvio(4, config.CriterioRentable)).Compare(context.Background(), scn)
+	if c.Best == nil || c.Best.ID != "coordinadora" || c.NoneInTime {
+		t.Fatalf("debía ganar Coordinadora (a tiempo): %+v", c)
+	}
+	for _, o := range c.Options {
+		if o.ID == "envia" && o.WithinLimit {
+			t.Fatalf("Envía (6 días) no cumple el plazo de 4: %+v", o)
+		}
+	}
+	// Same quotes without a limit: the most profitable wins.
+	c = svc(&fakeQ{quotes: q.quotes}, withEnvio(0, config.CriterioRentable)).Compare(context.Background(), scn)
+	if c.Best.ID != "envia" {
+		t.Fatalf("sin plazo gana la más rentable: %+v", c.Best)
+	}
+}
+
+func TestNoneInTimeFallsBackToFastestAndWarns(t *testing.T) {
+	q := &fakeQ{quotes: []dropi.Quote{{Carrier: "ENVIA", Freight: 9000, Days: 8}, {Carrier: "COORDINADORA", Freight: 15000, Days: 6}}}
+	c := svc(q, withEnvio(3, config.CriterioRentable)).Compare(context.Background(), scn)
+	if !c.NoneInTime || c.Best.ID != "coordinadora" || !strings.Contains(c.Warning, "3 días") {
+		t.Fatalf("ninguna llega en 3 días: debía recomendar la más rápida y avisar: %+v", c)
+	}
+}
+
+func TestCriterionFastestAndCheapest(t *testing.T) {
+	quotes := []dropi.Quote{{Carrier: "ENVIA", Freight: 9000, Days: 5}, {Carrier: "COORDINADORA", Freight: 15000, Days: 2}, {Carrier: "TCC", Freight: 12000, Days: 3}}
+	fast := svc(&fakeQ{quotes: quotes}, withEnvio(0, config.CriterioRapido)).Compare(context.Background(), scn)
+	if fast.Best.ID != "coordinadora" {
+		t.Fatalf("criterio rápido: %+v", fast.Best)
+	}
+	cheap := svc(&fakeQ{quotes: quotes}, withEnvio(0, config.CriterioBarato)).Compare(context.Background(), scn)
+	if cheap.Best.ID != "envia" {
+		t.Fatalf("criterio barato: %+v", cheap.Best)
+	}
+	for _, o := range fast.Options {
+		if o.ID == "coordinadora" && !o.Fastest {
+			t.Fatal("Coordinadora debe marcarse como más rápida")
+		}
+		if o.ID == "envia" && !o.Cheapest {
+			t.Fatal("Envía debe marcarse como más barata")
+		}
+	}
+}
+
+func TestFastOrCheapNeverPicksACarrierThatLosesMoney(t *testing.T) {
+	// A $60.000 order with $40.000 of product: the 2-day carrier charges so much
+	// freight that it loses money; the 5-day one still earns.
+	sc := scn
+	sc.Price, sc.UnitCost, sc.Units = 60000, 40000, 1
+	q := &fakeQ{quotes: []dropi.Quote{{Carrier: "COORDINADORA", Freight: 30000, Days: 2}, {Carrier: "ENVIA", Freight: 8000, Days: 5}}}
+	c := svc(q, withEnvio(0, config.CriterioRapido)).Compare(context.Background(), sc)
+	if c.Best.ID != "envia" || !c.Best.Viable {
+		t.Fatalf("no debe recomendar la rápida si pierde dinero habiendo otra que no: %+v", c.Options)
+	}
+}
+
+func TestEstimatedDaysByRisk(t *testing.T) {
+	tr, _ := config.DefaultNegocio().Carrier("Coordinadora")
+	if n, f := tr.EstimatedDays("normal"), tr.EstimatedDays("lejano"); n != 3 || f != 5 {
+		t.Fatalf("típicos por defecto: normal=%d lejano=%d", n, f)
+	}
+	tr.DiasEntrega, tr.DiasLejano = 2, 7
+	if tr.EstimatedDays("normal") != 2 || tr.EstimatedDays("zona_roja") != 7 {
+		t.Fatalf("lo configurado manda: %d %d", tr.EstimatedDays("normal"), tr.EstimatedDays("zona_roja"))
+	}
+	tr.DiasEntrega, tr.DiasLejano = 6, 2 // far can never be faster than near
+	if tr.EstimatedDays("lejano") != 6 {
+		t.Fatalf("lejano no puede ser más rápido que normal: %d", tr.EstimatedDays("lejano"))
+	}
+}
+
+func TestFallbackEstimateAlsoHasDays(t *testing.T) {
+	c := svc(nil, nil).Compare(context.Background(), scn)
+	if c.Best == nil || c.Best.Days <= 0 || c.Best.DaysSource != SourceEstimate {
+		t.Fatalf("incluso sin Dropi cada opción lleva su tiempo típico: %+v", c.Best)
+	}
+}
