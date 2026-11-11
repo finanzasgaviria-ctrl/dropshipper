@@ -34,6 +34,8 @@ func (s *Server) settingsRoutes(api *http.ServeMux) {
 	api.HandleFunc("PUT /api/ajustes/wompi", s.putWompi)
 	api.HandleFunc("DELETE /api/ajustes/wompi", s.delWompi)
 	api.HandleFunc("POST /api/whatsapp/probar", s.testWhatsApp)
+	api.HandleFunc("POST /api/whatsapp/conectar", s.connectWhatsApp)
+	api.HandleFunc("GET /api/whatsapp/estado", s.whatsappStatus)
 	api.HandleFunc("POST /api/wompi/probar", s.testWompi)
 	api.HandleFunc("POST /api/ia/proveedores", s.addProvider)
 	api.HandleFunc("PUT /api/ia/proveedores/{pid}", s.updateProvider)
@@ -125,6 +127,8 @@ type waIn struct {
 	VerifyToken   string `json:"verify_token"`
 	AppSecret     string `json:"app_secret"`
 	GraphVersion  string `json:"graph_version"`
+	AppID         string `json:"app_id"`
+	WABAID        string `json:"waba_id"`
 }
 
 func (in waIn) apply(old config.WhatsAppConfig) config.WhatsAppConfig {
@@ -135,7 +139,9 @@ func (in waIn) apply(old config.WhatsAppConfig) config.WhatsAppConfig {
 	out.Token = keep(in.Token, old.Token)
 	out.VerifyToken = keep(in.VerifyToken, old.VerifyToken)
 	out.AppSecret = keep(in.AppSecret, old.AppSecret)
-	out.PhoneNumberID = strings.TrimSpace(in.PhoneNumberID)
+	out.AppID = keep(in.AppID, old.AppID)
+	out.WABAID = keep(in.WABAID, old.WABAID)
+	out.PhoneNumberID = keep(in.PhoneNumberID, old.PhoneNumberID)
 	if v := strings.TrimSpace(in.GraphVersion); v != "" {
 		out.GraphVersion = v
 	}

@@ -56,6 +56,8 @@ type WhatsAppView struct {
 	VerifyToken   Secret `json:"verify_token"`
 	AppSecret     Secret `json:"app_secret"`
 	GraphVersion  string `json:"graph_version"`
+	AppID         string `json:"app_id"`
+	WABAID        string `json:"waba_id"`
 	Configured    bool   `json:"configurado"`
 	WebhookURL    string `json:"webhook_url"`
 }
@@ -153,7 +155,8 @@ func (s Settings) PublicWith(tunnelURL, webhookBase string) View {
 	}
 	w := s.WhatsApp
 	v.WhatsApp = WhatsAppView{Canal: w.Channel(), Token: NewSecret(w.Token), PhoneNumberID: w.PhoneNumberID, VerifyToken: NewSecret(w.VerifyToken),
-		AppSecret: NewSecret(w.AppSecret), GraphVersion: w.GraphVersion, Configured: w.Enabled(), WebhookURL: base + "/webhook/whatsapp"}
+		AppSecret: NewSecret(w.AppSecret), GraphVersion: w.GraphVersion, AppID: w.AppID, WABAID: w.WABAID,
+		Configured: w.Enabled(), WebhookURL: base + "/webhook/whatsapp"}
 	o := s.Wompi
 	v.Wompi = WompiView{PublicKey: o.PublicKey, PrivateKey: NewSecret(o.PrivateKey), EventsSecret: NewSecret(o.EventsSecret),
 		Sandbox: o.Sandbox, Configured: o.Enabled(), EventsURL: base + "/webhook/wompi"}
