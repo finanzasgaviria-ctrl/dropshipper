@@ -262,3 +262,41 @@ func (s *Store) Stats(ctx context.Context) (Stats, error) {
 	}
 	return st, nil
 }
+
+// DeleteOrder removes an order and its alerts (used to clean test orders).
+// The conversation and the customer are left untouched. The removal is
+// written to the audit trail so it is never silent.
+func (s *Store) DeleteOrder(ctx context.Context, id int64, by string) (Order, error) {
+	o, err := s.GetOrder(ctx, id)
+	if err != nil {
+		return o, err
+	}
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM alerts WHERE order_id = ?`, id); err != nil {
+		return o, err
+	}
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM orders WHERE id = ?`, id); err != nil {
+		return o, err
+	}
+	s.Audit(ctx, o.Phone, by, "pedido_borrado", fmt.Sprintf("pedido #%d (%s, %s) borrado", o.ID, o.Status, o.ProductName))
+	return o, nil
+}
+
+// DeleteSimOrders removes every order created from the simulator (phones
+// "sim-…") that never reached Dropi. Returns how many were deleted.
+func (s *Store) DeleteSimOrders(ctx context.Context, by string) (int, error) {
+	all, err := s.ListOrders(ctx)
+	if err != nil {
+		return 0, err
+	}
+	n := 0
+	for _, o := range all {
+		if !strings.HasPrefix(o.Phone, "sim-") || o.DropiOrderID != "" {
+			continue
+		}
+		if _, err := s.DeleteOrder(ctx, o.ID, by); err != nil {
+			return n, err
+		}
+		n++
+	}
+	return n, nil
+}
