@@ -80,6 +80,8 @@ func (s *Server) Handler() http.Handler {
 	api.HandleFunc("POST /api/contactos/{phone}/leido", s.markRead)
 	api.HandleFunc("GET /api/pedidos", s.orders)
 	api.HandleFunc("GET /api/pedidos/{id}", s.order)
+	api.HandleFunc("DELETE /api/pedidos/{id}", s.deleteOrder)
+	api.HandleFunc("POST /api/pedidos/borrar-simulador", s.deleteSimOrders)
 	api.HandleFunc("POST /api/pedidos/{id}/aprobar", s.approve)
 	api.HandleFunc("POST /api/pedidos/{id}/rechazar", s.reject)
 	api.HandleFunc("POST /api/pedidos/{id}/editar", s.edit)
@@ -366,6 +368,33 @@ func (s *Server) orders(w http.ResponseWriter, r *http.Request) {
 		os = []store.Order{}
 	}
 	writeJSON(w, 200, os)
+}
+
+// deleteOrder erases one order (test orders). The customer and the chat stay.
+func (s *Server) deleteOrder(w http.ResponseWriter, r *http.Request) {
+	id, err := pathID(r)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	o, err := s.Store.DeleteOrder(r.Context(), id, "dueno")
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	s.Engine.Events.Publish(convo.Event{Type: "pedido", Phone: o.Phone, ID: o.ID})
+	writeJSON(w, 200, map[string]any{"ok": true, "en_dropi": o.DropiOrderID != ""})
+}
+
+// deleteSimOrders cleans every order born in the simulator.
+func (s *Server) deleteSimOrders(w http.ResponseWriter, r *http.Request) {
+	n, err := s.Store.DeleteSimOrders(r.Context(), "dueno")
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	s.Engine.Events.Publish(convo.Event{Type: "pedido"})
+	writeJSON(w, 200, map[string]any{"ok": true, "borrados": n})
 }
 
 func (s *Server) order(w http.ResponseWriter, r *http.Request) {

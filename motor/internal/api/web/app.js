@@ -602,6 +602,14 @@ async function renderPedidos() {
     </tr>`).join('') || '<tr><td colspan="9"><div class="empty">Sin pedidos</div></td></tr>'}</tbody>`;
   $$('#orderTable tbody tr[data-id]').forEach((tr) => { tr.onclick = () => openOrderDetail(orders.find((o) => String(o.id) === tr.dataset.id)); });
 }
+$('#orderCleanSim').addEventListener('click', async () => {
+  if (!confirm('Se borran todos los pedidos que salieron del Simulador (los de WhatsApp reales no se tocan). ¿Seguro?')) return;
+  try {
+    const r = await post('/api/pedidos/borrar-simulador');
+    toast(r.borrados ? `Listo: ${r.borrados} pedido(s) de prueba borrado(s).` : 'No había pedidos del simulador.');
+    renderPedidos();
+  } catch (err) { toast(err.message, true); }
+});
 $('#orderFilter').addEventListener('change', () => renderPedidos().catch((e) => toast(e.message, true)));
 
 function openOrderDetail(o) {
@@ -612,7 +620,7 @@ function openOrderDetail(o) {
     ${orderKV(o)}${moneyBox(o)}
     ${o.tracking_number ? `<p>${ic('truck')} ${esc(o.carrier)} · guía <b>${esc(o.tracking_number)}</b>${o.dropi_order_id ? ' · Dropi ' + esc(o.dropi_order_id) : ''}</p>` : ''}
     ${shipped ? `<h4>Actualizar estado</h4><div class="actions">${statusBtns}</div>` : ''}
-    <div class="form-actions"><button class="btn" data-copy>${ic('copy', 14)} Copiar datos</button><button class="btn" data-chatm>${ic('message', 14)} Ver chat</button><button class="btn" data-close>Cerrar</button></div>`);
+    <div class="form-actions"><button class="btn" data-copy>${ic('copy', 14)} Copiar datos</button><button class="btn" data-chatm>${ic('message', 14)} Ver chat</button><button class="btn danger" data-delorder>Borrar pedido</button><button class="btn" data-close>Cerrar</button></div>`);
   $$('[data-st]', $('#modalBox')).forEach((b) => {
     b.onclick = async () => {
       try { await post(`/api/pedidos/${o.id}/estado`, { estado: b.dataset.st }); closeModal(); toast('Estado actualizado.'); renderPedidos(); } catch (err) { toast(err.message, true); }
@@ -620,6 +628,13 @@ function openOrderDetail(o) {
   });
   $('[data-copy]', $('#modalBox')).onclick = () => copyForDropi(o);
   $('[data-chatm]', $('#modalBox')).onclick = () => { closeModal(); openChat(o.phone); };
+  $('[data-delorder]', $('#modalBox')).onclick = async () => {
+    const warn = o.dropi_order_id
+      ? `Este pedido YA está en Dropi (${o.dropi_order_id}). Borrarlo aquí NO lo cancela en Dropi: tendrías que cancelarlo allá tú. ¿Borrarlo igual del panel?`
+      : `¿Borrar el pedido #${o.id}? No se puede deshacer. El chat y el cliente se quedan.`;
+    if (!confirm(warn)) return;
+    try { await del(`/api/pedidos/${o.id}`); closeModal(); toast('Pedido borrado.'); renderPedidos(); } catch (err) { toast(err.message, true); }
+  };
 }
 
 // ---------- conversaciones (lista; el detalle está en views.js) ----------

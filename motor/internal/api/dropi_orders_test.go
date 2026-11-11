@@ -269,3 +269,43 @@ func TestSplitName(t *testing.T) {
 		}
 	}
 }
+
+func TestDeleteTestOrders(t *testing.T) {
+	e := newEnv(t, "")
+	ctx := t.Context()
+	real := pendingOrder(t, e, store.OrderPendingApprove, "555")
+	sim1, _ := e.srv.Store.SaveOrder(ctx, store.Order{Phone: "sim-111", Status: store.OrderPendingApprove, ProductSKU: "x", ProductName: "x", Units: 1, Total: 1000})
+	sim2, _ := e.srv.Store.SaveOrder(ctx, store.Order{Phone: "sim-222", Status: store.OrderApproved, ProductSKU: "x", ProductName: "x", Units: 1, Total: 1000})
+	simDropi, _ := e.srv.Store.SaveOrder(ctx, store.Order{Phone: "sim-333", Status: store.OrderInDropi, ProductSKU: "x", ProductName: "x", Units: 1, Total: 1000, DropiOrderID: "77"})
+	_, _ = e.srv.Store.AddAlert(ctx, store.Alert{Phone: "sim-111", OrderID: sim1.ID, Kind: "x", Message: "m"})
+
+	// Bulk clean: removes simulator orders, keeps real ones and those already in Dropi.
+	r := e.do("POST", "/api/pedidos/borrar-simulador", nil)
+	if r.Code != 200 || r.json(t)["borrados"] != float64(2) {
+		t.Fatalf("limpiar: %d %s", r.Code, r.Body)
+	}
+	if _, err := e.srv.Store.GetOrder(ctx, sim1.ID); err == nil {
+		t.Fatal("el pedido del simulador debía borrarse")
+	}
+	if _, err := e.srv.Store.GetOrder(ctx, sim2.ID); err == nil {
+		t.Fatal("el segundo pedido del simulador debía borrarse")
+	}
+	if _, err := e.srv.Store.GetOrder(ctx, real); err != nil {
+		t.Fatal("el pedido real no se toca")
+	}
+	if _, err := e.srv.Store.GetOrder(ctx, simDropi.ID); err != nil {
+		t.Fatal("un pedido que ya está en Dropi no se borra en bloque")
+	}
+	if a, _ := e.srv.Store.OpenAlerts(ctx); len(a) != 0 {
+		t.Fatalf("las alertas del pedido borrado deben irse: %+v", a)
+	}
+
+	// Single delete works, and a missing order is a clean error.
+	r = e.do("DELETE", "/api/pedidos/"+strconv.FormatInt(real, 10), nil)
+	if r.Code != 200 {
+		t.Fatalf("borrar uno: %d %s", r.Code, r.Body)
+	}
+	if r = e.do("DELETE", "/api/pedidos/"+strconv.FormatInt(real, 10), nil); r.Code == 200 {
+		t.Fatal("borrar uno inexistente debe fallar")
+	}
+}
