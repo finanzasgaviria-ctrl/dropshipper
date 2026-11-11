@@ -191,6 +191,7 @@ const VIEWS = {
   pedidos: () => renderPedidos(),
   simulador: () => window.renderSimulador(),
   productos: (arg) => window.renderProductos(arg),
+  cazador: () => window.renderCazador(),
   envios: () => window.renderEnvios(),
   conexiones: () => window.renderConexiones(),
   ajustes: () => window.renderAjustes(),

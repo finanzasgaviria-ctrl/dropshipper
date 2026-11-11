@@ -100,6 +100,8 @@ type Negocio struct {
 	Dropi        DropiConf    `yaml:"dropi" json:"dropi"`
 	// Envio: how the carrier is recommended (speed vs. profit).
 	Envio EnvioConf `yaml:"envio" json:"envio"`
+	// Cazador: the rules used to judge candidate products.
+	Cazador CazadorConf `yaml:"cazador" json:"cazador"`
 	// Transportadoras: the carriers the owner works with. Notes feed the AI
 	// system prompt; the return rate and priority drive the carrier choice.
 	Transportadoras []Transportadora `yaml:"transportadoras" json:"transportadoras"`
@@ -178,6 +180,18 @@ type EnvioConf struct {
 	// Criterio: rentable | rapido | barato, applied among the carriers that
 	// arrive within MaxDias.
 	Criterio string `yaml:"criterio" json:"criterio"`
+}
+
+// CazadorConf holds the thresholds used to judge a candidate product. They
+// are rules of thumb the owner can change from the panel.
+type CazadorConf struct {
+	// MinVentas7d: fewer sales than this in 7 days = weak demand (default 10).
+	MinVentas7d int `yaml:"min_ventas_7d" json:"min_ventas_7d"`
+	// CPAMinimo: after costs, returns and the safety margin, the product must
+	// leave at least this much (COP) to spend on ads per order (default 15000).
+	CPAMinimo int64 `yaml:"cpa_minimo" json:"cpa_minimo"`
+	// MaxAnunciantes: more advertisers than this = crowded (0 = not checked).
+	MaxAnunciantes int `yaml:"max_anunciantes" json:"max_anunciantes"`
 }
 
 // DropiConf: until API access is granted, orders are uploaded by hand.
@@ -407,6 +421,15 @@ func (n *Negocio) ApplyDefaults() {
 	}
 	if n.Envio.MaxDias < 0 {
 		n.Envio.MaxDias = 0
+	}
+	if n.Cazador.MinVentas7d <= 0 {
+		n.Cazador.MinVentas7d = 10
+	}
+	if n.Cazador.CPAMinimo <= 0 {
+		n.Cazador.CPAMinimo = 15000
+	}
+	if n.Cazador.MaxAnunciantes < 0 {
+		n.Cazador.MaxAnunciantes = 0
 	}
 	if len(n.Transportadoras) == 0 {
 		n.Transportadoras = DefaultTransportadoras()

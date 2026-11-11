@@ -359,3 +359,17 @@ En **Envios > Cotizar y simular un pedido** elige un producto, una oferta y un d
 ### Datos del cliente
 
 La IA pide **correo electronico**, no cedula.
+
+
+## Cazador de productos (gratis, manual)
+
+Menú **Cazador**. Sirve para decidir qué producto probar antes de gastar en anuncios.
+
+1. Instala la extensión gratuita de DropKiller en Chrome (Chrome Web Store, busca "Dropkiller") e inicia sesión con una cuenta gratis.
+2. En el catálogo de Dropi la extensión muestra bajo cada producto las ventas de los últimos 7 días.
+3. En el Motor: **Agregar producto** y escribe nombre, costo, precio de venta, flete y lo que veas (stock, ventas, vendedores que lo anuncian). Lo que no sepas se deja vacío.
+4. El Motor responde **Vale la pena probarlo / Dudoso / No lo recomiendo** y explica cada punto: ganancia, demanda, stock, competencia. Nunca dice "bueno" si faltan datos.
+5. Con Dropi conectado, **Traer de Dropi** copia el costo y el stock reales usando el ID del producto.
+6. **Crear ficha de producto** crea el producto APAGADO en Productos; lo completas y lo enciendes tú.
+
+Las reglas se cambian en la misma pantalla (**Mis reglas para elegir productos**): ventas mínimas en 7 días, mínimo para anuncios por pedido y máximo de vendedores anunciándolo. Las devoluciones esperadas y el margen de seguridad salen de **Ajustes**.

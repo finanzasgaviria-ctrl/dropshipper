@@ -36,7 +36,7 @@ expuesto. Detalles en [`docs/CONFIGURACION.md`](docs/CONFIGURACION.md).
 | 1. MVP Vendedor | Hecha (vendedora IA, pedidos borrador, aprobaciones, reglas de zona); falta conectar tus cuentas reales |
 | 2. Cobro y postventa | Parcial (Bre-B/Wompi y comprobantes listos; **Aprobar crea la orden en Dropi** y la IA recomienda transportadora con tiempo de entrega; falta recibir guias y estados de Dropi solos y rescatar devoluciones) |
 | 3. Finanzas | Parcial (rentabilidad por pedido y producto, fletes de Dropi; falta Meta Insights) |
-| 4. Cazador + Propuestas | Pendiente. Integrar **Kalodata** (API abierta, solo plan Enterprise; sin MCP oficial) junto a DropKiller. Ver `docs/PROPUESTA.md` |
+| 4. Cazador + Propuestas | **Parcial.** Pestaña **Cazador** (manual, gratis): apuntas un producto con los datos de Dropi y de la extensión gratuita de DropKiller, y el Motor dice si vale la pena probarlo y cuánto gastar en anuncios. Pendiente: que la IA cace sola (DropKiller Advanced o similar, sin pagar Kalodata Enterprise). Ver `docs/PROPUESTA.md` |
 | 5. Landings, 6. Media Buyer, 7. Movil | Pendientes |
 
 ## Todo se configura desde el panel

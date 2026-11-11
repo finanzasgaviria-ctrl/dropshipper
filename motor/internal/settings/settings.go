@@ -257,6 +257,9 @@ func (s *Settings) Validate() error {
 	if n.Envio.MaxDias > 60 {
 		return errors.New("el máximo de días de entrega no puede pasar de 60 (usa 0 para no limitar)")
 	}
+	if n.Cazador.MinVentas7d > 100000 || n.Cazador.CPAMinimo > 5000000 || n.Cazador.MaxAnunciantes > 100000 {
+		return errors.New("las reglas del cazador tienen un valor demasiado alto; revísalas")
+	}
 	for _, t := range n.Transportadoras {
 		if t.DiasEntrega > 60 || t.DiasLejano > 60 {
 			return fmt.Errorf("los días de entrega de %s no pueden pasar de 60", t.Nombre)

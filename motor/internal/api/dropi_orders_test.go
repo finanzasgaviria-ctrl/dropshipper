@@ -40,6 +40,8 @@ func newDropiOrdersFake(t *testing.T, token string) *dropiOrdersFake {
 			_, _ = w.Write([]byte(`{"isSuccess":true,"objects":[
 				{"distribution_company":{"name":"COORDINADORA"},"shipping_amount":19000,"delivery_days":2},
 				{"distribution_company":{"name":"ENVIA"},"shipping_amount":14000,"delivery_days":5}]}`))
+		case "/products/v2/77":
+			_, _ = w.Write([]byte(`{"isSuccess":true,"objects":{"id":77,"name":"Masajeador","sale_price":26000,"stock":42}}`))
 		case "/orders/myorders":
 			f.mu.Lock()
 			defer f.mu.Unlock()

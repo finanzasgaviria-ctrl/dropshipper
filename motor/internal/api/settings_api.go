@@ -42,6 +42,7 @@ func (s *Server) settingsRoutes(api *http.ServeMux) {
 	api.HandleFunc("POST /api/ia/probar", s.testProvider)
 	api.HandleFunc("POST /api/ia/modelos", s.listModels)
 	s.dropiRoutes(api)
+	s.hunterRoutes(api)
 	s.ngrokRoutes(api)
 }
 

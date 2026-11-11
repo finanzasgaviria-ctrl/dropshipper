@@ -158,6 +158,24 @@ func (s *Store) migrate() error {
 			position INTEGER NOT NULL DEFAULT 0,
 			updated_at TIMESTAMP NOT NULL
 		)`,
+		`CREATE TABLE IF NOT EXISTS candidates (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			name TEXT NOT NULL,
+			dropi_product_id TEXT NOT NULL DEFAULT '',
+			source TEXT NOT NULL DEFAULT '',
+			cost INTEGER NOT NULL DEFAULT 0,
+			sale_price INTEGER NOT NULL DEFAULT 0,
+			freight INTEGER NOT NULL DEFAULT 0,
+			stock INTEGER NOT NULL DEFAULT -1,
+			sales7d INTEGER NOT NULL DEFAULT -1,
+			advertisers INTEGER NOT NULL DEFAULT -1,
+			link TEXT NOT NULL DEFAULT '',
+			notes TEXT NOT NULL DEFAULT '',
+			status TEXT NOT NULL DEFAULT 'nuevo',
+			product_sku TEXT NOT NULL DEFAULT '',
+			created_at TIMESTAMP NOT NULL,
+			updated_at TIMESTAMP NOT NULL
+		)`,
 	}
 	for _, st := range stmts {
 		if _, err := s.db.Exec(st); err != nil {
