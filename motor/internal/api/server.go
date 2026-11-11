@@ -78,6 +78,7 @@ func (s *Server) Handler() http.Handler {
 	api.HandleFunc("POST /api/contactos/{phone}/pausar", s.pause)
 	api.HandleFunc("POST /api/contactos/{phone}/responder", s.forceReply)
 	api.HandleFunc("POST /api/contactos/{phone}/leido", s.markRead)
+	api.HandleFunc("POST /api/contactos/{phone}/archivar", s.archive)
 	api.HandleFunc("GET /api/pedidos", s.orders)
 	api.HandleFunc("GET /api/pedidos/{id}", s.order)
 	api.HandleFunc("DELETE /api/pedidos/{id}", s.deleteOrder)
@@ -257,7 +258,9 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 // ---------- contacts & messages ----------
 
 func (s *Server) contacts(w http.ResponseWriter, r *http.Request) {
-	cs, err := s.Store.ListContacts(r.Context())
+	// ?archivados=1 lists the archive; by default the inbox.
+	archived := r.URL.Query().Get("archivados") == "1"
+	cs, err := s.Store.ListContacts(r.Context(), archived)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -350,6 +353,30 @@ func (s *Server) forceReply(w http.ResponseWriter, r *http.Request) {
 func (s *Server) markRead(w http.ResponseWriter, r *http.Request) {
 	_ = s.Store.MarkRead(r.Context(), r.PathValue("phone"))
 	writeJSON(w, 200, map[string]any{"ok": true})
+}
+
+// archive moves a chat to the archive (or back to the inbox). Unlike
+// DeleteContact it never loses anything: the history is still there.
+func (s *Server) archive(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Archivado bool `json:"archivado"`
+	}
+	if err := readJSON(r, &in); err != nil {
+		writeErr(w, err)
+		return
+	}
+	phone := r.PathValue("phone")
+	if err := s.Store.SetArchived(r.Context(), phone, in.Archivado); err != nil {
+		writeErr(w, err)
+		return
+	}
+	action := "chat_desarchivado"
+	if in.Archivado {
+		action = "chat_archivado"
+	}
+	s.Store.Audit(r.Context(), phone, "dueno", action, "")
+	s.Engine.Events.Publish(convo.Event{Type: "contacto", Phone: phone})
+	writeJSON(w, 200, map[string]any{"ok": true, "archivado": in.Archivado})
 }
 
 // ---------- orders ----------

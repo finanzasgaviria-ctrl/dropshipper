@@ -70,7 +70,10 @@
     <section id="view-chats" class="view">
       <div class="chat-layout">
         <div class="card chat-list">
-          <input id="chatSearch" type="search" placeholder="Buscar conversación" style="width:100%;margin-bottom:10px">
+          <div class="row gap" style="margin-bottom:10px">
+            <input id="chatSearch" type="search" placeholder="Buscar conversación" style="width:100%">
+            <button class="btn small" id="chatArchiveToggle" title="Ver conversaciones archivadas"></button>
+          </div>
           <div id="contactList" class="list"></div>
         </div>
         <div class="card chat-pane" id="chatPane"><div class="empty">Selecciona una conversación</div></div>

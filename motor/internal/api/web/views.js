@@ -31,9 +31,10 @@ async function showChat(phone) {
   pane.innerHTML = `
     <div class="chat-head">
       <button class="btn small icon" id="chatBack" title="Volver">${ic('back')}</button>
-      <div class="who"><b>${esc(contactName(c))}</b><div class="small muted">${c.simulated ? 'Chat de prueba' : '+' + esc(c.phone)} · ${esc(STAGE[c.stage] || c.stage)}</div></div>
+      <div class="who"><b>${esc(contactName(c))}</b><div class="small muted">${c.simulated ? 'Chat de prueba' : '+' + esc(c.phone)} · ${esc(STAGE[c.stage] || c.stage)}${c.archived ? ' · archivada' : ''}</div></div>
       ${open ? `<span class="row gap">${statusTag(open.status)} <span class="small">#${open.id} ${cop(open.total)}</span></span>` : ''}
       <button class="btn small" id="chatAudit">${ic('brain', 14)} Qué hizo la IA</button>
+      <button class="btn small" id="chatArchive" title="${c.archived ? 'Devolverla a la bandeja: el chat sigue completo' : 'Guardarla fuera de la bandeja sin borrar nada'}">${ic('archive', 14)} ${c.archived ? 'Desarchivar' : 'Archivar'}</button>
       ${c.ai_paused
         ? `<button class="btn small ok" id="chatResume">${ic('bot', 14)} Devolver a la IA</button>`
         : `<button class="btn small" id="chatTake">${ic('hand', 14)} Tomar el chat</button>`}
@@ -58,6 +59,15 @@ async function showChat(phone) {
   const t = $('#chatTake'); if (t) t.onclick = () => setPaused(true);
   ['#chatResume', '#chatResume2'].forEach((id) => { const b = $(id); if (b) b.onclick = () => setPaused(false); });
   $('#chatAudit').onclick = () => showAudit(phone);
+  $('#chatArchive').onclick = async () => {
+    const archivar = !c.archived;
+    try {
+      await post(`/api/contactos/${encodeURIComponent(phone)}/archivar`, { archivado: archivar });
+      toast(archivar ? 'Conversación archivada: sigue completa en Archivadas.' : 'Conversación devuelta a la bandeja.');
+      leaveChat();
+      await loadContacts();
+    } catch (err) { toast(err.message, true); }
+  };
   const ta = $('#chatText');
   ta.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); $('#chatForm').requestSubmit(); } });
   $('#chatForm').onsubmit = async (e) => {

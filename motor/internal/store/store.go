@@ -71,7 +71,8 @@ func (s *Store) migrate() error {
 			unread INTEGER NOT NULL DEFAULT 0,
 			last_message_at TIMESTAMP,
 			last_inbound_at TIMESTAMP,
-			created_at TIMESTAMP NOT NULL
+			created_at TIMESTAMP NOT NULL,
+			archived INTEGER NOT NULL DEFAULT 0
 		)`,
 		`CREATE TABLE IF NOT EXISTS messages (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -164,6 +165,42 @@ func (s *Store) migrate() error {
 			return fmt.Errorf("migrar: %w\n%s", err, st)
 		}
 	}
+	// Databases created before the archive existed gain the column here.
+	if err := s.ensureColumn("contacts", "archived", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
+	return nil
+}
+
+// ensureColumn adds a column to a table made by an older version of the Motor
+// (SQLite has no "ADD COLUMN IF NOT EXISTS").
+func (s *Store) ensureColumn(table, column, decl string) error {
+	rows, err := s.db.Query(`SELECT name FROM pragma_table_info(?)`, table)
+	if err != nil {
+		return fmt.Errorf("leer columnas de %s: %w", table, err)
+	}
+	var cols []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			rows.Close()
+			return err
+		}
+		cols = append(cols, name)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close() // one connection only: close before writing
+	for _, c := range cols {
+		if c == column {
+			return nil
+		}
+	}
+	if _, err := s.db.Exec(`ALTER TABLE ` + table + ` ADD COLUMN ` + column + ` ` + decl); err != nil {
+		return fmt.Errorf("agregar %s.%s: %w", table, column, err)
+	}
 	return nil
 }
 
@@ -184,6 +221,7 @@ type Contact struct {
 	LastInboundAt *time.Time `json:"last_inbound_at"`
 	CreatedAt     time.Time  `json:"created_at"`
 	LastPreview   string     `json:"last_preview,omitempty"`
+	Archived      bool       `json:"archived"`
 }
 
 // EnsureContact creates the contact if missing and fills the name if empty.
@@ -198,19 +236,19 @@ func (s *Store) EnsureContact(ctx context.Context, phone, name string, simulated
 	return s.GetContact(ctx, phone)
 }
 
-const contactCols = `phone, name, ai_paused, stage, simulated, notes, unread, last_message_at, last_inbound_at, created_at`
+const contactCols = `phone, name, ai_paused, stage, simulated, notes, unread, last_message_at, last_inbound_at, created_at, archived`
 
 func scanContact(row interface{ Scan(...any) error }) (Contact, error) {
 	var c Contact
-	var paused, sim int
+	var paused, sim, arch int
 	var lm, li sql.NullTime
-	if err := row.Scan(&c.Phone, &c.Name, &paused, &c.Stage, &sim, &c.Notes, &c.Unread, &lm, &li, &c.CreatedAt); err != nil {
+	if err := row.Scan(&c.Phone, &c.Name, &paused, &c.Stage, &sim, &c.Notes, &c.Unread, &lm, &li, &c.CreatedAt, &arch); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return c, ErrNotFound
 		}
 		return c, err
 	}
-	c.AIPaused, c.Simulated = paused == 1, sim == 1
+	c.AIPaused, c.Simulated, c.Archived = paused == 1, sim == 1, arch == 1
 	if lm.Valid {
 		t := lm.Time
 		c.LastMessageAt = &t
@@ -228,8 +266,9 @@ func (s *Store) GetContact(ctx context.Context, phone string) (Contact, error) {
 }
 
 // ListContacts returns contacts ordered by most recent activity, with a preview.
-func (s *Store) ListContacts(ctx context.Context) ([]Contact, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT `+contactCols+` FROM contacts ORDER BY COALESCE(last_message_at, created_at) DESC LIMIT 500`)
+// archived=false is the inbox; archived=true is the archive.
+func (s *Store) ListContacts(ctx context.Context, archived bool) ([]Contact, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT `+contactCols+` FROM contacts WHERE archived = ? ORDER BY COALESCE(last_message_at, created_at) DESC LIMIT 500`, boolInt(archived))
 	if err != nil {
 		return nil, err
 	}
@@ -287,6 +326,19 @@ func (s *Store) SetNotes(ctx context.Context, phone, notes string) error {
 func (s *Store) MarkRead(ctx context.Context, phone string) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE contacts SET unread = 0 WHERE phone = ?`, phone)
 	return err
+}
+
+// SetArchived hides a chat from the inbox (or brings it back). Nothing is
+// deleted: the messages, the orders and the audit trail stay in the database.
+func (s *Store) SetArchived(ctx context.Context, phone string, archived bool) error {
+	res, err := s.db.ExecContext(ctx, `UPDATE contacts SET archived = ? WHERE phone = ?`, boolInt(archived), phone)
+	if err != nil {
+		return err
+	}
+	if n, err := res.RowsAffected(); err == nil && n == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 // DeleteContact removes a contact and everything attached (simulator resets).

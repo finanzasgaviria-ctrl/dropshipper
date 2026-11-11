@@ -6,6 +6,8 @@ const S = {
   view: 'inicio',
   status: null,
   contacts: [],
+  inbox: [],
+  chatArchived: false,
   chatPhone: null,
   chatLastId: 0,
   simPhone: localStorage.getItem('ds_sim') || '',
@@ -13,6 +15,20 @@ const S = {
   typing: {},
   proofs: 0,
 };
+
+// El token puede llegar en la dirección (/?token=...): así un acceso directo
+// entra sin pedirlo y lo deja guardado en este navegador. Luego se borra de la
+// barra de direcciones para que no quede a la vista ni en el historial.
+(() => {
+  let u;
+  try { u = new URL(location.href); } catch (_) { return; }
+  const t = (u.searchParams.get('token') || '').trim();
+  if (!t) return;
+  S.token = t;
+  localStorage.setItem('ds_token', t);
+  u.searchParams.delete('token');
+  history.replaceState(null, '', u.pathname + u.search + u.hash);
+})();
 
 // ---------- helpers ----------
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -50,6 +66,7 @@ const ICONS = {
   info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
   trash: '<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/>',
+  archive: '<rect x="3" y="4" width="18" height="4" rx="1"/><path d="M5 8v11a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8"/><path d="M10 12h4"/>',
   key: '<circle cx="8" cy="15" r="4"/><path d="m11 12 9-9M16 7l3 3M14 9l2 2"/>',
   link: '<path d="M10 14a4.5 4.5 0 0 0 6.4 0l3-3a4.5 4.5 0 0 0-6.4-6.4l-1 1"/><path d="M14 10a4.5 4.5 0 0 0-6.4 0l-3 3a4.5 4.5 0 0 0 6.4 6.4l1-1"/>',
   refresh: '<path d="M20 11a8 8 0 0 0-14-4L4 9M4 4v5h5M4 13a8 8 0 0 0 14 4l2-2M20 20v-5h-5"/>',
@@ -250,7 +267,7 @@ async function refreshBadges() {
     const [st, es2] = await Promise.all([api('/api/stats'), api('/api/estado')]);
     S.stats = st; S.status = es2;
     $('#badgeAprob').textContent = (st.por_aprobar + S.proofs) || '';
-    $('#badgeChats').textContent = S.contacts.reduce((n, c) => n + (c.unread || 0), 0) || '';
+    $('#badgeChats').textContent = S.inbox.reduce((n, c) => n + (c.unread || 0), 0) || '';
     $('#badgeConn').textContent = setupSteps(es2).filter((x) => !x.done && x.required).length || '';
   } catch (_) { /* sin conexión */ }
 }
@@ -280,7 +297,7 @@ function setupSteps(st) {
 async function renderInicio() {
   $('#today').textContent = new Date().toLocaleDateString('es-CO', { weekday: 'long', day: 'numeric', month: 'long' });
   const [st, alerts, contacts, estado] = await Promise.all([api('/api/stats'), api('/api/alertas'), api('/api/contactos'), api('/api/estado')]);
-  S.contacts = contacts; S.status = estado;
+  S.contacts = contacts; S.inbox = contacts; S.status = estado;
 
   const steps = setupSteps(estado);
   const pending = steps.filter((s) => !s.done);
@@ -330,6 +347,7 @@ const alertLabel = (k) => ({ escalamiento: 'El cliente pide atención humana', a
 
 function contactItem(c) {
   const flags = [c.ai_paused ? '<span class="tag warn">IA en pausa</span>' : '', c.simulated ? '<span class="tag">prueba</span>' : '',
+    c.archived ? '<span class="tag">archivada</span>' : '',
     c.stage && c.stage !== 'nuevo' ? `<span class="tag info">${esc(STAGE[c.stage] || c.stage)}</span>` : ''].join(' ');
   return `<div class="item ${c.phone === S.chatPhone ? 'active' : ''}" data-phone="${esc(c.phone)}" style="cursor:pointer">
     <div class="row"><b>${esc(contactName(c))}</b><span class="spacer"></span><span class="small muted">${fmtTime(c.last_message_at)}</span></div>
@@ -639,14 +657,40 @@ function openOrderDetail(o) {
 
 // ---------- conversaciones (lista; el detalle está en views.js) ----------
 async function loadContacts() {
-  S.contacts = await api('/api/contactos');
+  S.contacts = await api('/api/contactos' + (S.chatArchived ? '?archivados=1' : ''));
+  if (!S.chatArchived) S.inbox = S.contacts;
   const q = ($('#chatSearch').value || '').toLowerCase();
   const list = S.contacts.filter((c) => !q || contactName(c).toLowerCase().includes(q) || c.phone.includes(q));
-  $('#contactList').innerHTML = list.map(contactItem).join('') || '<div class="empty">Sin conversaciones</div>';
+  $('#contactList').innerHTML = list.map(contactItem).join('') || `<div class="empty">${S.chatArchived ? 'No hay conversaciones archivadas' : 'Sin conversaciones'}</div>`;
   $$('#contactList .item').forEach((el) => { el.onclick = () => openChat(el.dataset.phone); });
+  syncArchiveToggle();
   refreshBadges();
 }
+
+// syncArchiveToggle keeps the list button describing what it will do next.
+function syncArchiveToggle() {
+  const b = $('#chatArchiveToggle');
+  if (!b) return;
+  b.classList.toggle('primary', S.chatArchived);
+  b.innerHTML = `${ic('archive', 14)} ${S.chatArchived ? 'Volver a la bandeja' : 'Archivadas'}`;
+  b.title = S.chatArchived ? 'Volver a las conversaciones activas' : 'Ver conversaciones archivadas';
+}
+
 $('#chatSearch').addEventListener('input', () => loadContacts().catch(() => {}));
+syncArchiveToggle();
+$('#chatArchiveToggle').addEventListener('click', () => {
+  S.chatArchived = !S.chatArchived;
+  leaveChat(); // the pane belongs to the other list
+  loadContacts().catch((e) => toast(e.message, true));
+});
+
+// leaveChat clears the open conversation and shows the empty pane.
+function leaveChat() {
+  S.chatPhone = null;
+  $('.chat-layout')?.classList.remove('has-chat');
+  const pane = $('#chatPane');
+  if (pane) pane.innerHTML = '<div class="empty">Selecciona una conversación</div>';
+}
 
 async function renderChats() {
   await loadContacts();

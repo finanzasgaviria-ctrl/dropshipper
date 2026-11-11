@@ -159,6 +159,14 @@ func (e *Engine) HandleInbound(ctx context.Context, in Inbound) error {
 	if err != nil {
 		return err
 	}
+	if contact.Archived {
+		// A customer writing again brings the chat back to the inbox so the
+		// archived ones never hide a live conversation.
+		if err := e.Store.SetArchived(ctx, in.Phone, false); err == nil {
+			contact.Archived = false
+			e.Events.Publish(Event{Type: "contacto", Phone: in.Phone})
+		}
+	}
 	if contact.AIPaused {
 		e.Events.Publish(Event{Type: "alerta", Phone: in.Phone})
 		return nil
